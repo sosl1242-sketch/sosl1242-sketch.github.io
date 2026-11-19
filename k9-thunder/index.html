@@ -260,6 +260,15 @@
   .aim-btn.ready { animation: blinkWarn 1.1s infinite; box-shadow: 0 0 14px rgba(245,185,66,0.45); }
   .net-row { display: flex; justify-content: space-between; gap: 8px; font-family: var(--font-mono); font-size: 11px; padding: 3px 0; }
   .net-ok { color: var(--accent); } .net-wait { color: var(--amber); } .net-bad { color: var(--danger); }
+  .keys-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .keys-table th { text-align: left; color: var(--accent); font-family: var(--font-mono); font-size: 11px; padding: 10px 0 4px; letter-spacing: 0.05em; }
+  .keys-table td { padding: 4px 0; border-bottom: 1px solid rgba(88,168,108,0.14); }
+  .keys-table td:first-child { width: 44%; white-space: nowrap; color: var(--muted); }
+  kbd {
+    display: inline-block; min-width: 22px; padding: 1px 6px; margin-right: 3px; text-align: center;
+    background: #1b2a1f; border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 4px;
+    font-family: var(--font-mono); font-size: 11px; color: var(--text);
+  }
   .invite-box {
     width: 100%; background: #070b08; color: #86efac; border: 1px solid var(--border); border-radius: 5px;
     padding: 7px 9px; font-family: var(--font-mono); font-size: 12px; user-select: text; -webkit-user-select: text;
@@ -350,6 +359,7 @@
       <button class="hud-btn" id="btn-recon-toggle" title="낙하산 정찰 카메라 전환 (TAB)">🪂 정찰캠 [TAB]</button>
       <button class="hud-btn amber-btn" id="btn-thermal-toggle" style="display:none;" title="열화상 전환 (T)">FLIR [T]</button>
       <button class="hud-btn hide-sm" id="btn-hud-hide">HUD 숨김</button>
+      <button class="hud-btn" id="btn-help" title="조작법 (?)">❓ 조작법</button>
       <button class="hud-btn" id="btn-invite" title="친구 초대 링크 복사">🔗 초대</button>
       <button class="hud-btn" id="btn-mp-modal">멀티(<span id="hud-peers">1</span>)</button>
       <button class="hud-btn" id="btn-json-modal">JSON</button>
@@ -433,14 +443,14 @@
   <div class="bottom-console">
     <div class="ctrl-block">
       <div class="ctrl-col">
-        <div class="ctrl-label"><span>기동(I/K/Q/E)</span><strong id="val-speed">0 km/h</strong></div>
+        <div class="ctrl-label"><span>주행(W/A/S/D)</span><strong id="val-speed">0 km/h</strong></div>
         <div class="drive-pad">
           <div></div>
-          <button class="mini-btn" id="btn-move-fwd" title="전진 (I)">▲</button>
+          <button class="mini-btn" id="btn-move-fwd" title="전진 (W)">▲</button>
           <div></div>
-          <button class="mini-btn" id="btn-turn-left" title="좌회전 (Q)">↺</button>
-          <button class="mini-btn" id="btn-move-back" title="후진 (K)">▼</button>
-          <button class="mini-btn" id="btn-turn-right" title="우회전 (E)">↻</button>
+          <button class="mini-btn" id="btn-turn-left" title="좌회전 (A)">↺</button>
+          <button class="mini-btn" id="btn-move-back" title="후진 (S)">▼</button>
+          <button class="mini-btn" id="btn-turn-right" title="우회전 (D)">↻</button>
         </div>
       </div>
     </div>
@@ -448,11 +458,11 @@
     <div class="ctrl-block">
       <div class="ammo-group">
         <button class="ammo-btn selected-recon" id="btn-ammo-recon">
-          <strong>🪂 정찰탄[R]</strong>
+          <strong>🪂 정찰탄 [1]</strong>
           낙하산 캠
         </button>
         <button class="ammo-btn" id="btn-ammo-he">
-          <strong>💥 고폭탄[H]</strong>
+          <strong>💥 고폭탄 [2]</strong>
           155mm 포격
         </button>
       </div>
@@ -460,7 +470,7 @@
 
     <div class="ctrl-block">
       <div class="ctrl-col">
-        <div class="ctrl-label"><span>방위(A/D)</span><strong id="val-az">012.0°</strong></div>
+        <div class="ctrl-label"><span>포탑(←/→)</span><strong id="val-az">012.0°</strong></div>
         <div class="step-row">
           <button class="mini-btn" id="az-minus">-</button>
           <input type="range" id="slider-az" min="0" max="360" step="0.2" value="12">
@@ -468,7 +478,7 @@
         </div>
       </div>
       <div class="ctrl-col">
-        <div class="ctrl-label"><span>고각(W/S)</span><strong id="val-el">32.0°</strong></div>
+        <div class="ctrl-label"><span>고각(↑/↓·휠)</span><strong id="val-el">32.0°</strong></div>
         <div class="step-row">
           <button class="mini-btn" id="el-minus">-</button>
           <input type="range" id="slider-el" min="5" max="75" step="0.2" value="32">
@@ -479,7 +489,7 @@
 
     <div class="ctrl-block">
       <div class="ctrl-col">
-        <div class="ctrl-label"><span>장약[1-5]</span><strong id="val-charge">3호</strong></div>
+        <div class="ctrl-label"><span>장약(Z/X)</span><strong id="val-charge">3호</strong></div>
         <div class="charge-group" id="charge-group">
           <button class="charge-btn" data-c="0">1</button>
           <button class="charge-btn" data-c="1">2</button>
@@ -507,9 +517,10 @@
         실제 <strong>한국군 K9 자주포(4색 위장·52구경장 다공 제퇴기·6보기륜 궤도·K6 기관총)</strong>를 WebGL 3D 연산 코드로 정밀 구현한 멀티플레이어 게임입니다.
       </p>
       <div style="background:rgba(82,224,120,0.08);border:1px solid var(--border);border-radius:6px;padding:10px;margin-bottom:12px;font-size:12px;">
-        <div>1️⃣ <strong>[V] 키</strong>로 <strong>3인칭 K9 외형 시점 ↔ 1인칭 포수 조준경</strong>을 즉시 전환하세요.</div>
-        <div style="margin-top:4px;">2️⃣ <strong>정찰포탄 [R]</strong>을 쏘면 낙하산 카메라가 <strong>스스로 회전하며 주변을 스캔</strong>하고, 적을 찾으면 좌표를 자동으로 잠급니다.</div>
-        <div style="margin-top:4px;">3️⃣ <strong>[F] 자동조준</strong> → <strong>[Space] 고폭탄 발사</strong> → <strong>기동(I/K/Q/E)</strong>으로 75m 이상 이동해 대포병을 회피하세요!</div>
+        <div>🎮 <strong>W/A/S/D</strong> 주행 · <strong>←/→ 또는 마우스 드래그</strong> 포탑 · <strong>↑/↓ 또는 휠</strong> 고각 · <strong>Space</strong> 발사</div>
+        <div style="margin-top:4px;">1️⃣ <strong>[1] 정찰탄</strong>을 쏘면 낙하산 카메라가 <strong>스스로 회전하며 주변을 스캔</strong>하고, 적을 찾으면 좌표를 자동으로 잠급니다.</div>
+
+        <div style="margin-top:4px;">3️⃣ <strong>[F] 자동조준</strong> → <strong>[Space] 고폭탄 발사</strong> → <strong>W/A/S/D</strong>로 75m 이상 이동해 대포병을 회피하세요! <span style="color:var(--muted)">(전체 조작법: <strong>?</strong> 키)</span></div>
       </div>
       <div id="invite-hint" style="display:none;background:rgba(56,189,248,0.1);border:1px solid rgba(56,189,248,0.45);border-radius:6px;padding:8px 10px;margin-bottom:10px;font-size:12px;color:#7dd3fc;"></div>
       <div class="form-row">
@@ -583,6 +594,42 @@
         <div style="font-family:var(--font-mono);font-size:12px;color:var(--accent);margin-bottom:6px;">현재 전장 참가자</div>
         <div id="mp-roster" style="font-family:var(--font-mono);font-size:11px;display:grid;grid-template-columns:1fr 1fr;gap:6px;"></div>
       </div>
+    </div>
+  </div>
+</div>
+
+<!-- CONTROLS HELP MODAL -->
+<div class="modal-backdrop" id="help-modal">
+  <div class="modal-card" style="max-width:560px;">
+    <div class="modal-head">
+      <h2>🎮 조작법</h2>
+      <button class="hud-btn" id="btn-close-help">닫기 [?]</button>
+    </div>
+    <div class="modal-body">
+      <table class="keys-table">
+        <tr><th colspan="2">주행</th></tr>
+        <tr><td><kbd>W</kbd><kbd>S</kbd></td><td>전진 / 후진</td></tr>
+        <tr><td><kbd>A</kbd><kbd>D</kbd></td><td>좌회전 / 우회전 (포탑도 같이 돌아감)</td></tr>
+        <tr><td><kbd>C</kbd></td><td>포탑을 차체 정면으로 정렬</td></tr>
+        <tr><th colspan="2">조준</th></tr>
+        <tr><td>마우스 드래그</td><td>포탑 회전 + 고각</td></tr>
+        <tr><td><kbd>←</kbd><kbd>→</kbd> / <kbd>Q</kbd><kbd>E</kbd></td><td>포탑 좌우 회전</td></tr>
+        <tr><td><kbd>↑</kbd><kbd>↓</kbd> / 마우스 휠</td><td>고각 올리기 / 내리기</td></tr>
+        <tr><td><kbd>Shift</kbd> 누른 채로</td><td>정밀 조준 (천천히)</td></tr>
+        <tr><td><kbd>F</kbd></td><td>잠긴 표적으로 자동조준 (고폭탄·장약 자동 선택)</td></tr>
+        <tr><th colspan="2">사격</th></tr>
+        <tr><td><kbd>Space</kbd> / 마우스 우클릭</td><td>발사</td></tr>
+        <tr><td><kbd>1</kbd> <kbd>2</kbd></td><td>정찰탄 / 고폭탄</td></tr>
+        <tr><td><kbd>Z</kbd> <kbd>X</kbd></td><td>장약 내리기 / 올리기 (사거리)</td></tr>
+        <tr><th colspan="2">화면</th></tr>
+        <tr><td><kbd>Tab</kbd></td><td>정찰캠 크게 보기 ↔ 전차</td></tr>
+        <tr><td><kbd>V</kbd></td><td>3인칭 ↔ 1인칭 포수 시점</td></tr>
+        <tr><td><kbd>T</kbd></td><td>열화상 (정찰캠에서)</td></tr>
+        <tr><td><kbd>Enter</kbd></td><td>채팅 입력 / 보내기</td></tr>
+        <tr><td><kbd>M</kbd></td><td>소리 끄기 / 켜기</td></tr>
+        <tr><td><kbd>?</kbd> / <kbd>Esc</kbd></td><td>이 창 열기 / 닫기</td></tr>
+      </table>
+      <div style="margin-top:10px;font-size:12px;color:var(--muted);">📱 모바일: 화면 드래그로 조준, 아래 버튼으로 주행·발사·자동조준. 한글 입력 상태에서도 키가 그대로 동작합니다.</div>
     </div>
   </div>
 </div>
@@ -2024,7 +2071,7 @@
     setViewMode('THIRD');
     updateHUDValues();
     document.getElementById('end-modal').classList.remove('open');
-    addRadio('crew', '포반장', 'K9 전투배치 완료! 정찰탄[R] 발사 → 자동 스캔으로 적 식별 → [F] 자동조준 → [Space] 고폭탄!');
+    addRadio('crew', '포반장', 'K9 전투배치 완료! [1]정찰탄 발사 → 자동 스캔으로 적 식별 → [F] 자동조준 → [2]고폭탄 [Space]! 조작법은 [?]');
   }
 
   function spawnShell({ ownerId, ownerCallsign, team, ammo, x, y, z, az, el, charge, isLocal }) {
@@ -2061,7 +2108,7 @@
       state.scoot.timer = gameConfig.physics.scootGraceSec || 9.5; state.scoot.counterFired = false;
       document.getElementById('scoot-banner').classList.add('show');
       const tofTxt = state.predictImpact ? ` 탄착까지 ${state.predictImpact.tof.toFixed(1)}초.` : '';
-      addRadio('crew', '조종수', `155mm 고폭탄 발사!${tofTxt} 즉시 기동(I/K/Q/E)해 75m 이탈하십시오!`);
+      addRadio('crew', '조종수', `155mm 고폭탄 발사!${tofTxt} 즉시 W/A/S/D로 75m 이탈하십시오!`);
     } else {
       addRadio('crew', '장전수', `정찰포탄 발사! 방위 ${p.az.toFixed(1)}°, 고각 ${p.el.toFixed(1)}° — 낙하산 전개 후 자동 스캔합니다.`);
     }
@@ -2253,21 +2300,20 @@
     if (p.shake > 0) p.shake = Math.max(0, p.shake - dt * 2.2);
 
     if (state.started && !state.gameOver && document.activeElement?.tagName !== 'INPUT' && document.activeElement?.tagName !== 'TEXTAREA') {
-      const fine = state.keys['Shift'] ? 0.28 : 1.0;
-      if (state.keys['a'] || state.keys['ArrowLeft']) p.targetAz = normAngle(p.targetAz - 38 * fine * dt);
-      if (state.keys['d'] || state.keys['ArrowRight']) p.targetAz = normAngle(p.targetAz + 38 * fine * dt);
-      if ((state.keys['w'] && !state.keys['Shift']) || state.keys['ArrowUp']) p.targetEl = Math.min(75, p.targetEl + 24 * fine * dt);
-      if ((state.keys['s'] && !state.keys['Shift']) || state.keys['ArrowDown']) p.targetEl = Math.max(5, p.targetEl - 24 * fine * dt);
+      const K = state.keys, fine = K.shift ? 0.25 : 1.0;
+      if (K.ArrowLeft || K.KeyQ) p.targetAz = normAngle(p.targetAz - 40 * fine * dt);
+      if (K.ArrowRight || K.KeyE) p.targetAz = normAngle(p.targetAz + 40 * fine * dt);
+      if (K.ArrowUp) p.targetEl = Math.min(75, p.targetEl + 22 * fine * dt);
+      if (K.ArrowDown) p.targetEl = Math.max(5, p.targetEl - 22 * fine * dt);
 
-      const turnInput = (state.keys['e'] || state.keys['btn_turn_r'] ? 1 : 0) - (state.keys['q'] || state.keys['btn_turn_l'] ? 1 : 0);
+      const turnInput = (K.KeyD || K.btn_turn_r ? 1 : 0) - (K.KeyA || K.btn_turn_l ? 1 : 0);
       if (turnInput !== 0) {
         const dTurn = turnInput * (gameConfig.physics.sphTurnRateDeg || 44) * dt;
         p.hullAz = normAngle(p.hullAz + dTurn);
-        p.targetAz = normAngle(p.targetAz + dTurn * 0.35);
+        p.targetAz = normAngle(p.targetAz + dTurn); p.az = normAngle(p.az + dTurn); // turret turns with the hull so the view follows
       }
 
-      const fwdInput = (state.keys['i'] || (state.keys['Shift'] && state.keys['w']) || state.keys['btn_fwd'] ? 1 : 0)
-                     - (state.keys['k'] || (state.keys['Shift'] && state.keys['s']) || state.keys['btn_back'] ? 1 : 0);
+      const fwdInput = (K.KeyW || K.btn_fwd ? 1 : 0) - (K.KeyS || K.btn_back ? 1 : 0);
       const maxSpd = gameConfig.physics.sphMaxSpeed || 19.5;
       const revSpd = gameConfig.physics.sphReverseSpeed || 10.5;
       const targetVel = fwdInput > 0 ? maxSpd : (fwdInput < 0 ? -revSpd : 0);
@@ -2538,6 +2584,11 @@
     }
 
     if (state.pipRect) drawPipOverlay(state.pipRect);
+    if (w > 860) {
+      const hint = 'W/A/S/D 주행 · 드래그/←→↑↓ 조준 · Space 발사 · 1/2 탄종 · F 자동조준 · Tab 정찰캠 · ? 조작법';
+      ctx.font = '11px monospace'; ctx.textAlign = 'center'; ctx.fillStyle = 'rgba(220,233,223,0.7)';
+      ctx.fillText(hint, w * 0.5, getConsoleTop() - 10);
+    }
     ctx.restore();
   }
 
@@ -2717,7 +2768,7 @@
     document.getElementById('btn-ammo-he').classList.toggle('selected-he', type === 'HE');
     const fireBtn = document.getElementById('btn-fire');
     fireBtn.classList.toggle('recon-mode', type === 'RECON');
-    fireBtn.textContent = type === 'RECON' ? '정찰탄 발사 [Space]' : '고폭탄 발사 [Space]';
+    fireBtn.textContent = type === 'RECON' ? '🪂 정찰탄 발사 [Space]' : '💥 고폭탄 발사 [Space]';
   }
   function selectCharge(idx) {
     state.player.charge = Math.max(0, Math.min(4, idx));
@@ -2746,7 +2797,7 @@
   }
   function applyAutoAim() {
     const mt = state.markedTarget;
-    if (!mt) { showToast('잠긴 표적이 없습니다 — 정찰탄[R]부터 쏘세요'); return; }
+    if (!mt) { showToast('잠긴 표적이 없습니다 — [1] 정찰탄부터 쏘세요'); return; }
     const p = state.player;
     const sol = solveFiringSolution(p.x, p.y, p.z, mt.x, mt.z);
     mt.sol = sol; mt.solAt = state.time;
@@ -2870,6 +2921,15 @@
       const sb = document.getElementById('btn-mp-share'); sb.style.display = 'inline-block';
       sb.addEventListener('click', () => navigator.share({ title: 'K9 Thunder 3D', text: `K9 자주포 같이 하자! 방 ${state.roomCode}`, url: inviteLink(state.roomCode) }).catch(() => {}));
     }
+    document.getElementById('btn-help').addEventListener('click', toggleHelp);
+    document.getElementById('btn-close-help').addEventListener('click', toggleHelp);
+    hudCanvas.addEventListener('wheel', (e) => {
+      if (!state.started || state.viewMode === 'RECON') return;
+      e.preventDefault();
+      const p = state.player, step = (e.shiftKey ? 0.15 : 0.6) * Math.sign(e.deltaY);
+      p.targetEl = Math.max(5, Math.min(75, p.targetEl - step));
+    }, { passive: false });
+    hudCanvas.addEventListener('contextmenu', (e) => { e.preventDefault(); if (state.started && e.pointerType !== 'touch') fireLocalCannon(); });
     window.addEventListener('pagehide', () => { if (state.started) net.send({ type: 'LEAVE', callsign: state.player.callsign, team: state.player.team }); });
 
     document.getElementById('btn-cam-cycle').addEventListener('click', () => {
@@ -2930,7 +2990,7 @@
       net.send({ type: 'CHAT', callsign: state.player.callsign, team: state.player.team, text: txt });
     };
     document.getElementById('btn-chat-send').addEventListener('click', sendChat);
-    document.getElementById('chat-input').addEventListener('keydown', (e) => { if (e.key === 'Enter') sendChat(); });
+    document.getElementById('chat-input').addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.isComposing) { e.stopPropagation(); e.preventDefault(); sendChat(); e.target.blur(); } });
 
     document.getElementById('btn-json-modal').addEventListener('click', () => { renderJsonEditor(); document.getElementById('json-modal').classList.add('open'); });
     document.getElementById('btn-close-json').addEventListener('click', () => document.getElementById('json-modal').classList.remove('open'));
@@ -2982,43 +3042,55 @@
     });
     hudCanvas.addEventListener('pointermove', (e) => {
       state.pointer.x = e.clientX; state.pointer.y = e.clientY;
-      if (state.pointer.down && state.viewMode !== 'RECON' && state.started) {
-        const dx = e.clientX - state.pointer.lastX, dy = e.clientY - state.pointer.lastY;
-        state.player.targetAz = normAngle(state.player.targetAz + dx * 0.16);
-        state.player.targetEl = Math.max(5, Math.min(75, state.player.targetEl - dy * 0.14));
+      if (state.pointer.down && state.viewMode !== 'RECON' && state.started && !(e.buttons & 2)) {
+        const dx = e.clientX - state.pointer.lastX, dy = e.clientY - state.pointer.lastY, f = e.shiftKey ? 0.3 : 1;
+        state.player.targetAz = normAngle(state.player.targetAz + dx * 0.16 * f);
+        state.player.targetEl = Math.max(5, Math.min(75, state.player.targetEl - dy * 0.14 * f));
         state.pointer.lastX = e.clientX; state.pointer.lastY = e.clientY;
       }
     });
     window.addEventListener('pointerup', () => { state.pointer.down = false; });
 
+    const closeModals = () => ['json-modal', 'mp-modal', 'help-modal'].forEach(id => document.getElementById(id).classList.remove('open'));
     window.addEventListener('keydown', (e) => {
-      if (document.activeElement?.tagName === 'INPUT' || document.activeElement?.tagName === 'TEXTAREA') {
-        if (e.key === 'Escape') { document.getElementById('json-modal').classList.remove('open'); document.getElementById('mp-modal').classList.remove('open'); }
+      const tag = document.activeElement?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA') {
+        if (e.key === 'Escape') { closeModals(); document.activeElement.blur(); }
         return;
       }
-      state.keys[e.key] = true; state.keys[e.key.toLowerCase()] = true;
-      if (e.key === ' ' || e.key === 'Tab') e.preventDefault();
+      const code = e.code;
+      state.keys[code] = true; state.keys.shift = e.shiftKey;
+      if (['Space', 'Tab', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'F1'].includes(code)) e.preventDefault();
       if (e.repeat) return;
-      if (e.key === ' ') fireLocalCannon();
-      else if (e.key === 'Tab') toggleReconView();
-      else if (e.key.toLowerCase() === 'f') applyAutoAim();
-      else if (e.key.toLowerCase() === 'v') { if (state.viewMode === 'RECON') setViewMode(state.lastTankView); else setViewMode(state.viewMode === 'THIRD' ? 'GUNNER' : 'THIRD'); }
-      else if (e.key.toLowerCase() === 'r') selectAmmo('RECON');
-      else if (e.key.toLowerCase() === 'h') selectAmmo('HE');
-      else if (e.key.toLowerCase() === 't' && state.viewMode === 'RECON') { state.thermal = !state.thermal; document.getElementById('btn-thermal-toggle').classList.toggle('active', state.thermal); }
-      else if (e.key.toLowerCase() === 'j') { const m = document.getElementById('json-modal'); if (m.classList.contains('open')) m.classList.remove('open'); else { renderJsonEditor(); m.classList.add('open'); } }
-      else if (e.key >= '1' && e.key <= '5') selectCharge(Number(e.key) - 1);
-      else if (e.key === 'Escape') { document.getElementById('json-modal').classList.remove('open'); document.getElementById('mp-modal').classList.remove('open'); }
+      if (code === 'Slash' || code === 'F1') { toggleHelp(); return; }
+      if (code === 'Escape') { closeModals(); return; }
+      if (!state.started) return;
+      switch (code) {
+        case 'Space': fireLocalCannon(); break;
+        case 'Tab': toggleReconView(); break;
+        case 'KeyF': applyAutoAim(); break;
+        case 'KeyV': if (state.viewMode === 'RECON') setViewMode(state.lastTankView); else setViewMode(state.viewMode === 'THIRD' ? 'GUNNER' : 'THIRD'); break;
+        case 'Digit1': case 'Numpad1': case 'KeyR': selectAmmo('RECON'); break;
+        case 'Digit2': case 'Numpad2': case 'KeyH': selectAmmo('HE'); break;
+        case 'KeyZ': selectCharge(state.player.charge - 1); showToast(`장약 ${state.player.charge + 1}호`); break;
+        case 'KeyX': selectCharge(state.player.charge + 1); showToast(`장약 ${state.player.charge + 1}호`); break;
+        case 'KeyC': state.player.targetAz = state.player.hullAz; showToast('포탑 정면 정렬'); break;
+        case 'KeyT': if (state.viewMode === 'RECON') { state.thermal = !state.thermal; document.getElementById('btn-thermal-toggle').classList.toggle('active', state.thermal); } break;
+        case 'KeyM': document.getElementById('btn-mute').click(); break;
+        case 'Enter': case 'NumpadEnter': e.preventDefault(); document.getElementById('panel-radio').classList.add('mob-open'); document.getElementById('chat-input').focus(); break;
+        case 'KeyJ': { const m = document.getElementById('json-modal'); if (m.classList.contains('open')) m.classList.remove('open'); else { renderJsonEditor(); m.classList.add('open'); } } break;
+      }
     });
     window.addEventListener('keyup', (e) => {
-      state.keys[e.key] = false; state.keys[e.key.toLowerCase()] = false;
-      if (e.key === ' ' && document.activeElement?.tagName !== 'INPUT' && document.activeElement?.tagName !== 'TEXTAREA') e.preventDefault();
+      state.keys[e.code] = false; state.keys.shift = e.shiftKey;
+      if (e.code === 'Space' && document.activeElement?.tagName !== 'INPUT' && document.activeElement?.tagName !== 'TEXTAREA') e.preventDefault();
     });
     window.addEventListener('blur', () => { state.keys = {}; });
   }
+  function toggleHelp() { document.getElementById('help-modal').classList.toggle('open'); }
   function toggleReconView() {
     if (state.viewMode === 'RECON') { setViewMode(state.lastTankView); return; }
-    if (!getActiveChute()) { showToast('떠 있는 정찰캠이 없습니다 — 정찰탄[R]을 먼저 쏘세요'); return; }
+    if (!getActiveChute()) { showToast('떠 있는 정찰캠이 없습니다 — [1] 정찰탄을 먼저 쏘세요'); return; }
     setViewMode('RECON');
   }
 
