@@ -1,0 +1,3061 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>K9 Thunder 3D — 1·3인칭 자주포 정찰·포격 시뮬레이터</title>
+<script src="vendor/three.min.js"></script>
+<script>window.THREE || document.write('<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"><\/script>');</script>
+<script src="vendor/mqtt.min.js"></script>
+<script>window.mqtt || document.write('<script src="https://unpkg.com/mqtt@5.16.1/dist/mqtt.min.js"><\/script>');</script>
+<style>
+  :root {
+    --bg: #0b0f0c;
+    --panel: rgba(11, 17, 13, 0.86);
+    --panel-solid: #111813;
+    --border: rgba(88, 168, 108, 0.36);
+    --accent: #52e078;
+    --amber: #f5b942;
+    --danger: #ff4d4d;
+    --friend: #38bdf8;
+    --text: #dce9df;
+    --muted: #8aa592;
+    --font-mono: 'JetBrains Mono', 'Fira Code', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Malgun Gothic', 'Apple SD Gothic Neo', sans-serif;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; -webkit-user-select: none; }
+  html, body {
+    width: 100%; height: 100%; overflow: hidden;
+    background: var(--bg); color: var(--text);
+    font-family: var(--font-sans);
+    touch-action: none;
+  }
+  #game-root {
+    position: relative; width: 100vw; height: 100vh; overflow: hidden;
+    display: flex; flex-direction: column;
+  }
+  #webgl-container {
+    position: absolute; inset: 0; width: 100%; height: 100%; z-index: 1;
+  }
+  #hud-canvas {
+    position: absolute; inset: 0; width: 100%; height: 100%; z-index: 5;
+    pointer-events: auto; cursor: crosshair;
+  }
+
+  /* Top HUD Bar */
+  .top-bar {
+    position: relative; z-index: 25;
+    display: flex; align-items: center; justify-content: space-between; gap: 6px;
+    padding: 5px 8px;
+    background: linear-gradient(180deg, rgba(7,11,8,0.92) 0%, rgba(7,11,8,0.5) 100%);
+    border-bottom: 1px solid var(--border);
+    font-family: var(--font-mono); font-size: 11px;
+    flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none;
+  }
+  .top-bar::-webkit-scrollbar { display: none; }
+  .top-group { display: flex; align-items: center; gap: 5px; flex-shrink: 0; }
+  .badge {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 3px 7px; border-radius: 4px;
+    background: rgba(18, 28, 21, 0.85); border: 1px solid var(--border);
+    white-space: nowrap;
+  }
+  .badge.accent { border-color: rgba(82, 224, 120, 0.55); color: var(--accent); }
+  .badge.amber { border-color: rgba(245, 185, 66, 0.55); color: var(--amber); }
+  .badge.danger { border-color: rgba(255, 77, 77, 0.6); color: var(--danger); }
+  .badge.friend { border-color: rgba(56, 189, 248, 0.55); color: var(--friend); }
+  .dot-live {
+    width: 6px; height: 6px; border-radius: 50%; background: var(--accent);
+    box-shadow: 0 0 8px var(--accent); animation: pulse 1.6s infinite;
+  }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.35; } }
+  @keyframes blinkWarn { 0%,100% { opacity: 1; } 50% { opacity: 0.45; } }
+
+  .hud-btn {
+    background: rgba(20, 32, 24, 0.9); color: var(--text);
+    border: 1px solid var(--border); border-radius: 4px;
+    padding: 4px 8px; font-size: 11px; font-family: var(--font-mono);
+    cursor: pointer; transition: all 0.14s ease; white-space: nowrap;
+  }
+  .hud-btn:hover { background: rgba(42, 72, 49, 0.95); border-color: var(--accent); color: #fff; }
+  .hud-btn.active { background: rgba(82, 224, 120, 0.22); border-color: var(--accent); color: var(--accent); }
+  .hud-btn.amber-btn { border-color: rgba(245, 185, 66, 0.6); color: var(--amber); }
+  .hud-btn.amber-btn.active { background: rgba(245, 185, 66, 0.25); }
+
+  /* Shoot-and-Scoot Warning Banner */
+  #scoot-banner {
+    position: absolute; top: 76px; left: 50%; transform: translateX(-50%);
+    z-index: 23; display: none; align-items: center; gap: 8px;
+    background: rgba(65, 14, 14, 0.92); border: 1px solid var(--danger);
+    padding: 5px 12px; border-radius: 999px;
+    font-family: var(--font-mono); font-size: 11px; color: #fecaca;
+    box-shadow: 0 0 18px rgba(255, 77, 77, 0.4);
+    animation: blinkWarn 1.05s infinite; white-space: nowrap;
+  }
+  #scoot-banner.show { display: flex; }
+
+  /* Recon Mode Banner */
+  #recon-banner {
+    position: absolute; top: 76px; left: 50%; transform: translateX(-50%);
+    z-index: 22; display: none; align-items: center; gap: 8px;
+    background: rgba(8, 22, 14, 0.92); border: 1px solid var(--accent);
+    padding: 5px 12px; border-radius: 999px;
+    font-family: var(--font-mono); font-size: 11px; color: var(--accent);
+    box-shadow: 0 0 18px rgba(82, 224, 120, 0.25); white-space: nowrap;
+  }
+  #recon-banner.show { display: flex; }
+
+  /* Mobile Compact Panel Toggle Bar */
+  .mobile-drawer-bar {
+    display: none; position: relative; z-index: 21;
+    padding: 4px 8px; gap: 6px; justify-content: space-between;
+    pointer-events: none;
+  }
+  .mobile-drawer-bar .mob-group { display: flex; gap: 5px; pointer-events: auto; }
+
+  /* Middle Overlay */
+  .mid-layer {
+    position: relative; z-index: 15; flex: 1; pointer-events: none;
+    display: flex; justify-content: space-between; align-items: flex-start;
+    padding: 8px 10px; overflow: hidden;
+  }
+  .left-stack, .right-stack {
+    display: flex; flex-direction: column; gap: 8px;
+    max-width: 262px; pointer-events: none;
+    transition: opacity 0.18s ease, transform 0.18s ease;
+  }
+  .hud-hidden .left-stack, .hud-hidden .right-stack {
+    opacity: 0; pointer-events: none !important; transform: translateY(-8px);
+  }
+  .hud-hidden .panel-box { pointer-events: none !important; }
+
+  .panel-box {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 6px;
+    padding: 8px 10px; pointer-events: auto;
+    backdrop-filter: blur(5px);
+  }
+  .panel-title {
+    font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.06em;
+    color: var(--muted); text-transform: uppercase; margin-bottom: 5px;
+    display: flex; justify-content: space-between; align-items: center; gap: 6px;
+  }
+
+  .sol-grid {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 4px 10px;
+    font-family: var(--font-mono); font-size: 11px;
+  }
+  .sol-item span { display: block; font-size: 9px; color: var(--muted); }
+  .sol-item strong { color: var(--accent); font-size: 12px; }
+  .sol-item.warn strong { color: var(--amber); }
+
+  .radio-log {
+    max-height: 108px; overflow-y: auto; display: flex; flex-direction: column; gap: 4px;
+    font-size: 11px; line-height: 1.35; padding-right: 3px;
+  }
+  .radio-log::-webkit-scrollbar { width: 4px; }
+  .radio-log::-webkit-scrollbar-thumb { background: rgba(82,224,120,0.3); border-radius: 2px; }
+  .radio-msg { padding: 2px 4px; border-radius: 3px; background: rgba(255,255,255,0.03); }
+  .radio-msg .who { font-weight: 700; margin-right: 4px; font-family: var(--font-mono); font-size: 10px; }
+  .radio-msg.crew .who { color: var(--accent); }
+  .radio-msg.friend .who { color: var(--friend); }
+  .radio-msg.enemy .who { color: var(--danger); }
+  .radio-msg.sys .who { color: var(--amber); }
+  .radio-input-row { display: flex; gap: 4px; margin-top: 6px; }
+  .radio-input-row input {
+    flex: 1; min-width: 0; background: rgba(5, 9, 6, 0.9); color: var(--text);
+    border: 1px solid var(--border); border-radius: 4px; padding: 4px 6px;
+    font-size: 11px; outline: none; user-select: text; -webkit-user-select: text;
+  }
+  .radio-input-row input:focus { border-color: var(--accent); }
+
+  #minimap-canvas {
+    width: 140px; height: 140px; border-radius: 50%;
+    border: 1px solid rgba(82, 224, 120, 0.5);
+    background: #07110a; display: block; margin: 0 auto; cursor: pointer;
+  }
+
+  /* Bottom Control Console */
+  .bottom-console {
+    position: relative; z-index: 20;
+    background: linear-gradient(0deg, rgba(6, 10, 7, 0.95) 0%, rgba(11, 17, 13, 0.85) 100%);
+    border-top: 1px solid var(--border);
+    padding: 6px 10px;
+    display: flex; align-items: center; justify-content: space-between; gap: 7px;
+    flex-wrap: wrap;
+  }
+  .ctrl-block {
+    display: flex; align-items: center; gap: 7px;
+    background: rgba(18, 28, 21, 0.74); border: 1px solid var(--border);
+    border-radius: 6px; padding: 5px 8px;
+  }
+  .ctrl-col { display: flex; flex-direction: column; gap: 3px; }
+  .ctrl-label {
+    font-family: var(--font-mono); font-size: 10px; color: var(--muted);
+    display: flex; justify-content: space-between; gap: 6px;
+  }
+  .ctrl-label strong { color: var(--accent); }
+  input[type="range"] { accent-color: var(--accent); width: 98px; cursor: pointer; }
+  .step-row { display: flex; align-items: center; gap: 4px; }
+  .mini-btn {
+    background: #17241a; color: var(--text); border: 1px solid var(--border);
+    border-radius: 4px; width: 26px; height: 24px; font-family: var(--font-mono);
+    font-size: 12px; cursor: pointer; display: inline-flex; align-items: center; justify-content: center;
+  }
+  .mini-btn:hover, .mini-btn:active { border-color: var(--accent); color: var(--accent); background: #223827; }
+
+  .drive-pad {
+    display: grid; grid-template-columns: repeat(3, 28px); grid-template-rows: 23px 23px; gap: 3px;
+  }
+  .drive-pad .mini-btn { width: 28px; height: 23px; font-size: 11px; }
+
+  .ammo-group { display: flex; gap: 4px; }
+  .ammo-btn {
+    padding: 5px 8px; border-radius: 5px; border: 1px solid var(--border);
+    background: #131e16; color: var(--muted); cursor: pointer;
+    font-family: var(--font-mono); font-size: 10px; text-align: left;
+    transition: all 0.14s ease;
+  }
+  .ammo-btn strong { display: block; font-size: 11px; color: var(--text); }
+  .ammo-btn.selected-recon {
+    border-color: var(--friend); background: rgba(56, 189, 248, 0.18); color: var(--friend);
+  }
+  .ammo-btn.selected-recon strong { color: #7dd3fc; }
+  .ammo-btn.selected-he {
+    border-color: var(--danger); background: rgba(255, 77, 77, 0.18); color: #fca5a5;
+  }
+  .ammo-btn.selected-he strong { color: #ff6b6b; }
+
+  .charge-group { display: flex; gap: 3px; }
+  .charge-btn {
+    width: 24px; height: 26px; border-radius: 4px; border: 1px solid var(--border);
+    background: #131e16; color: var(--muted); font-family: var(--font-mono);
+    font-size: 11px; font-weight: 700; cursor: pointer;
+  }
+  .charge-btn.active {
+    background: rgba(245, 185, 66, 0.24); border-color: var(--amber); color: var(--amber);
+  }
+
+  .fire-btn {
+    padding: 9px 16px; border-radius: 6px; border: 2px solid #ff5757;
+    background: linear-gradient(180deg, #b91c1c 0%, #7f1d1d 100%);
+    color: #fff; font-family: var(--font-mono); font-size: 13px; font-weight: 800;
+    letter-spacing: 0.04em; cursor: pointer;
+    box-shadow: 0 0 16px rgba(239, 68, 68, 0.35);
+    transition: transform 0.08s ease, box-shadow 0.14s ease; white-space: nowrap;
+  }
+  .fire-btn:hover { box-shadow: 0 0 24px rgba(239, 68, 68, 0.65); }
+  .fire-btn:active { transform: scale(0.96); }
+  .fire-btn.recon-mode {
+    border-color: var(--friend);
+    background: linear-gradient(180deg, #0284c7 0%, #075985 100%);
+    box-shadow: 0 0 16px rgba(56, 189, 248, 0.4);
+  }
+  .fire-btn:disabled { opacity: 0.45; cursor: not-allowed; filter: grayscale(0.5); }
+  .aim-btn {
+    padding: 9px 12px; border-radius: 6px; border: 2px solid var(--amber);
+    background: rgba(245, 185, 66, 0.16); color: var(--amber);
+    font-family: var(--font-mono); font-size: 12px; font-weight: 800; cursor: pointer; white-space: nowrap;
+  }
+  .aim-btn:disabled { opacity: 0.35; cursor: not-allowed; border-color: var(--border); color: var(--muted); background: #131e16; }
+  .aim-btn.ready { animation: blinkWarn 1.1s infinite; box-shadow: 0 0 14px rgba(245,185,66,0.45); }
+  .net-row { display: flex; justify-content: space-between; gap: 8px; font-family: var(--font-mono); font-size: 11px; padding: 3px 0; }
+  .net-ok { color: var(--accent); } .net-wait { color: var(--amber); } .net-bad { color: var(--danger); }
+  .invite-box {
+    width: 100%; background: #070b08; color: #86efac; border: 1px solid var(--border); border-radius: 5px;
+    padding: 7px 9px; font-family: var(--font-mono); font-size: 12px; user-select: text; -webkit-user-select: text;
+  }
+
+  /* Modals */
+  .modal-backdrop {
+    position: fixed; inset: 0; z-index: 50;
+    background: rgba(4, 8, 5, 0.78); backdrop-filter: blur(5px);
+    display: none; align-items: center; justify-content: center; padding: 12px;
+  }
+  .modal-backdrop.open { display: flex; }
+  .modal-card {
+    width: 100%; max-width: 720px; max-height: 88vh; overflow-y: auto;
+    background: var(--panel-solid); border: 1px solid var(--accent);
+    border-radius: 10px; padding: 16px;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.75);
+  }
+  .modal-head {
+    display: flex; justify-content: space-between; align-items: center; gap: 8px;
+    margin-bottom: 12px; padding-bottom: 8px; border-bottom: 1px solid var(--border);
+  }
+  .modal-head h2 { font-size: 15px; color: var(--accent); font-family: var(--font-mono); }
+  .modal-body { font-size: 13px; line-height: 1.5; color: var(--text); }
+  textarea.code-box {
+    width: 100%; height: 250px; background: #070b08; color: #86efac;
+    border: 1px solid var(--border); border-radius: 6px; padding: 10px;
+    font-family: var(--font-mono); font-size: 11px; line-height: 1.45;
+    resize: vertical; outline: none; user-select: text; -webkit-user-select: text;
+  }
+  .modal-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; justify-content: flex-end; }
+  .tab-row { display: flex; gap: 6px; margin-bottom: 10px; flex-wrap: wrap; }
+  .form-row { display: flex; gap: 8px; align-items: center; margin-bottom: 10px; flex-wrap: wrap; }
+  .form-row input, .form-row select {
+    background: #070b08; color: var(--text); border: 1px solid var(--border);
+    border-radius: 5px; padding: 6px 9px; font-family: var(--font-mono); font-size: 12px;
+    user-select: text; -webkit-user-select: text;
+  }
+
+  #toast {
+    position: fixed; bottom: 96px; left: 50%; transform: translateX(-50%);
+    z-index: 60; background: rgba(14, 24, 17, 0.95); color: var(--accent);
+    border: 1px solid var(--accent); padding: 7px 14px; border-radius: 6px;
+    font-family: var(--font-mono); font-size: 12px;
+    opacity: 0; pointer-events: none; transition: opacity 0.2s ease; white-space: nowrap;
+  }
+  #toast.show { opacity: 1; }
+
+  /* MOBILE / NARROW VIEWPORT */
+  @media (max-width: 860px) {
+    .hide-sm { display: none !important; }
+    .mobile-drawer-bar { display: flex; }
+    .mid-layer { padding: 4px 8px; }
+    .left-stack, .right-stack {
+      position: absolute; top: 4px; z-index: 24;
+      max-width: min(260px, 82vw);
+    }
+    .left-stack { left: 8px; }
+    .right-stack { right: 8px; }
+    #panel-ballistics, #panel-radio, #panel-minimap { display: none; }
+    #panel-ballistics.mob-open, #panel-radio.mob-open, #panel-minimap.mob-open { display: block; }
+    #minimap-canvas { width: 122px; height: 122px; }
+    .bottom-console { padding: 4px 6px; gap: 4px; justify-content: space-between; }
+    .ctrl-block { padding: 4px 5px; gap: 4px; }
+    input[type="range"] { width: 64px; }
+    .ammo-btn { padding: 4px 5px; font-size: 9px; }
+    .ammo-btn strong { font-size: 10px; }
+    .fire-btn { padding: 7px 11px; font-size: 11px; }
+    .aim-btn { padding: 7px 8px; font-size: 10px; }
+  }
+</style>
+</head>
+<body>
+<div id="game-root">
+  <div id="webgl-container"></div>
+  <canvas id="hud-canvas"></canvas>
+
+  <!-- TOP HUD BAR -->
+  <div class="top-bar">
+    <div class="top-group">
+      <div class="badge accent"><span class="dot-live"></span><span id="hud-callsign">포수_민준</span></div>
+      <div class="badge">HP <strong id="hud-hp" style="color:var(--accent)">100</strong></div>
+      <div class="badge amber">격파 <strong id="hud-kills">0</strong>/<strong id="hud-total-enemies">4</strong></div>
+      <div class="badge hide-sm">바람 <strong id="hud-wind">5.5m/s</strong></div>
+    </div>
+    <div class="top-group">
+      <button class="hud-btn active" id="btn-cam-cycle" title="3인칭 ↔ 1인칭 시점 변경 (V)">3인칭 K9 [V]</button>
+      <button class="hud-btn" id="btn-recon-toggle" title="낙하산 정찰 카메라 전환 (TAB)">🪂 정찰캠 [TAB]</button>
+      <button class="hud-btn amber-btn" id="btn-thermal-toggle" style="display:none;" title="열화상 전환 (T)">FLIR [T]</button>
+      <button class="hud-btn hide-sm" id="btn-hud-hide">HUD 숨김</button>
+      <button class="hud-btn" id="btn-invite" title="친구 초대 링크 복사">🔗 초대</button>
+      <button class="hud-btn" id="btn-mp-modal">멀티(<span id="hud-peers">1</span>)</button>
+      <button class="hud-btn" id="btn-json-modal">JSON</button>
+      <button class="hud-btn" id="btn-mute">🔊</button>
+    </div>
+  </div>
+
+  <!-- MOBILE COMPACT DRAWER PILLS -->
+  <div class="mobile-drawer-bar">
+    <div class="mob-group">
+      <button class="hud-btn" id="mob-btn-ballistics">📊 제원</button>
+      <button class="hud-btn" id="mob-btn-minimap">🗺️ 지도</button>
+      <button class="hud-btn" id="mob-btn-radio">📻 무전</button>
+    </div>
+    <div class="badge accent" id="mob-compass-pill" style="font-family:var(--font-mono);font-size:10px;">AZ 012° · EL 32°</div>
+  </div>
+
+  <!-- SHOOT & SCOOT WARNING -->
+  <div id="scoot-banner">
+    <span>🚨 대포병 노출!</span>
+    <span id="scoot-dist-badge">이동 0m / 75m</span>
+    <span id="scoot-timer-badge">9.5s</span>
+  </div>
+
+  <!-- RECON BANNER -->
+  <div id="recon-banner">
+    <span>🪂 자동 정찰 스캔</span>
+    <span id="recon-alt-badge">ALT 340m</span>
+    <span class="hide-sm" style="color:var(--text);font-size:10px;">적 자동 식별·좌표 잠금 · [F] 자동조준 · 다른 유닛 탭하면 표적 변경</span>
+  </div>
+
+  <!-- MIDDLE OVERLAY -->
+  <div class="mid-layer">
+    <div class="left-stack">
+      <div class="panel-box" id="panel-ballistics">
+        <div class="panel-title">
+          <span>탄도 계산기 (JSON)</span>
+          <span id="hud-reload-status" style="color:var(--accent)">장전 완료</span>
+        </div>
+        <div class="sol-grid">
+          <div class="sol-item"><span>예상 사거리</span><strong id="sol-range">0 m</strong></div>
+          <div class="sol-item"><span>체공 시간</span><strong id="sol-tof">0.0 s</strong></div>
+          <div class="sol-item warn"><span>표적 방위각</span><strong id="sol-tgt-az">--°</strong></div>
+          <div class="sol-item warn"><span>권장 고각/장약</span><strong id="sol-tgt-el">--° / C-</strong></div>
+        </div>
+        <div style="margin-top:6px;display:flex;gap:5px;">
+          <button class="hud-btn" id="btn-auto-aim" style="flex:1;font-size:10px;" disabled>식별 표적 제원 자동입력</button>
+        </div>
+      </div>
+
+      <div class="panel-box" id="panel-radio">
+        <div class="panel-title">
+          <span>전술 무전 / 멀티 채팅</span>
+          <span id="hud-room-tag" style="color:var(--friend)">CH: K9-ALPHA</span>
+        </div>
+        <div class="radio-log" id="radio-log"></div>
+        <div class="radio-input-row">
+          <input type="text" id="chat-input" placeholder="무전/채팅 입력..." maxlength="80">
+          <button class="hud-btn" id="btn-chat-send">송신</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="right-stack">
+      <div class="panel-box" id="panel-minimap" style="text-align:center;">
+        <div class="panel-title">
+          <span>전술 상황도</span>
+          <span style="color:var(--friend)" id="hud-chute-count">정찰 0</span>
+        </div>
+        <canvas id="minimap-canvas" width="160" height="160"></canvas>
+        <div style="font-size:10px;color:var(--muted);margin-top:4px;font-family:var(--font-mono);">
+          <span style="color:var(--accent)">▲나</span> ·
+          <span style="color:var(--friend)">●친구</span> ·
+          <span style="color:var(--danger)">■적</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- BOTTOM CONTROL CONSOLE -->
+  <div class="bottom-console">
+    <div class="ctrl-block">
+      <div class="ctrl-col">
+        <div class="ctrl-label"><span>기동(I/K/Q/E)</span><strong id="val-speed">0 km/h</strong></div>
+        <div class="drive-pad">
+          <div></div>
+          <button class="mini-btn" id="btn-move-fwd" title="전진 (I)">▲</button>
+          <div></div>
+          <button class="mini-btn" id="btn-turn-left" title="좌회전 (Q)">↺</button>
+          <button class="mini-btn" id="btn-move-back" title="후진 (K)">▼</button>
+          <button class="mini-btn" id="btn-turn-right" title="우회전 (E)">↻</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="ctrl-block">
+      <div class="ammo-group">
+        <button class="ammo-btn selected-recon" id="btn-ammo-recon">
+          <strong>🪂 정찰탄[R]</strong>
+          낙하산 캠
+        </button>
+        <button class="ammo-btn" id="btn-ammo-he">
+          <strong>💥 고폭탄[H]</strong>
+          155mm 포격
+        </button>
+      </div>
+    </div>
+
+    <div class="ctrl-block">
+      <div class="ctrl-col">
+        <div class="ctrl-label"><span>방위(A/D)</span><strong id="val-az">012.0°</strong></div>
+        <div class="step-row">
+          <button class="mini-btn" id="az-minus">-</button>
+          <input type="range" id="slider-az" min="0" max="360" step="0.2" value="12">
+          <button class="mini-btn" id="az-plus">+</button>
+        </div>
+      </div>
+      <div class="ctrl-col">
+        <div class="ctrl-label"><span>고각(W/S)</span><strong id="val-el">32.0°</strong></div>
+        <div class="step-row">
+          <button class="mini-btn" id="el-minus">-</button>
+          <input type="range" id="slider-el" min="5" max="75" step="0.2" value="32">
+          <button class="mini-btn" id="el-plus">+</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="ctrl-block">
+      <div class="ctrl-col">
+        <div class="ctrl-label"><span>장약[1-5]</span><strong id="val-charge">3호</strong></div>
+        <div class="charge-group" id="charge-group">
+          <button class="charge-btn" data-c="0">1</button>
+          <button class="charge-btn" data-c="1">2</button>
+          <button class="charge-btn active" data-c="2">3</button>
+          <button class="charge-btn" data-c="3">4</button>
+          <button class="charge-btn" data-c="4">5</button>
+        </div>
+      </div>
+    </div>
+
+    <button class="aim-btn" id="btn-auto-aim-quick" disabled title="잠금 표적 제원 자동입력 (F)">🎯 자동조준 [F]</button>
+    <button class="fire-btn recon-mode" id="btn-fire">정찰탄 발사 [Space]</button>
+  </div>
+</div>
+
+<!-- START / BRIEFING MODAL -->
+<div class="modal-backdrop open" id="start-modal">
+  <div class="modal-card" style="max-width:560px;">
+    <div class="modal-head">
+      <h2 style="font-size:15px;white-space:nowrap;">🎯 K9 Thunder 3D 작전 개시</h2>
+      <span class="badge accent">WEBGL 3D + JSON</span>
+    </div>
+    <div class="modal-body">
+      <p style="margin-bottom:10px;">
+        실제 <strong>한국군 K9 자주포(4색 위장·52구경장 다공 제퇴기·6보기륜 궤도·K6 기관총)</strong>를 WebGL 3D 연산 코드로 정밀 구현한 멀티플레이어 게임입니다.
+      </p>
+      <div style="background:rgba(82,224,120,0.08);border:1px solid var(--border);border-radius:6px;padding:10px;margin-bottom:12px;font-size:12px;">
+        <div>1️⃣ <strong>[V] 키</strong>로 <strong>3인칭 K9 외형 시점 ↔ 1인칭 포수 조준경</strong>을 즉시 전환하세요.</div>
+        <div style="margin-top:4px;">2️⃣ <strong>정찰포탄 [R]</strong>을 쏘면 낙하산 카메라가 <strong>스스로 회전하며 주변을 스캔</strong>하고, 적을 찾으면 좌표를 자동으로 잠급니다.</div>
+        <div style="margin-top:4px;">3️⃣ <strong>[F] 자동조준</strong> → <strong>[Space] 고폭탄 발사</strong> → <strong>기동(I/K/Q/E)</strong>으로 75m 이상 이동해 대포병을 회피하세요!</div>
+      </div>
+      <div id="invite-hint" style="display:none;background:rgba(56,189,248,0.1);border:1px solid rgba(56,189,248,0.45);border-radius:6px;padding:8px 10px;margin-bottom:10px;font-size:12px;color:#7dd3fc;"></div>
+      <div class="form-row">
+        <label style="font-family:var(--font-mono);font-size:12px;">콜사인:</label>
+        <input type="text" id="input-callsign" value="포수_민준" maxlength="16" style="width:120px;">
+        <label style="font-family:var(--font-mono);font-size:12px;">방 코드:</label>
+        <input type="text" id="input-room" value="K9-ALPHA" maxlength="16" style="width:105px;">
+        <select id="input-team">
+          <option value="alpha">아군 (Alpha)</option>
+          <option value="bravo">적군 (Bravo·PvP)</option>
+        </select>
+      </div>
+      <div class="modal-actions">
+        <button class="fire-btn recon-mode" id="btn-start-game" style="width:100%;padding:12px;">K9 자주포 탑승 및 작전 개시</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- JSON ENGINE MODAL -->
+<div class="modal-backdrop" id="json-modal">
+  <div class="modal-card">
+    <div class="modal-head">
+      <h2>{ } JSON 게임 엔진 & 실시간 프로토콜</h2>
+      <button class="hud-btn" id="btn-close-json">닫기 [ESC]</button>
+    </div>
+    <div class="modal-body">
+      <div class="tab-row">
+        <button class="hud-btn active" id="tab-json-config">게임 설정 JSON (편집 가능)</button>
+        <button class="hud-btn" id="tab-json-state">실시간 월드 상태 JSON</button>
+        <button class="hud-btn" id="tab-json-packets">멀티 JSON 패킷 로그</button>
+      </div>
+      <textarea class="code-box" id="json-editor" spellcheck="false"></textarea>
+      <div id="json-status" style="font-family:var(--font-mono);font-size:11px;color:var(--amber);margin-top:6px;"></div>
+      <div class="modal-actions">
+        <button class="hud-btn" id="btn-json-copy">JSON 복사</button>
+        <button class="hud-btn" id="btn-json-reset">기본값 복원</button>
+        <button class="hud-btn active" id="btn-json-apply">설정 JSON 즉시 적용</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- MULTIPLAYER MODAL -->
+<div class="modal-backdrop" id="mp-modal">
+  <div class="modal-card" style="max-width:640px;">
+    <div class="modal-head">
+      <h2>📡 친구와 멀티플레이</h2>
+      <button class="hud-btn" id="btn-close-mp">닫기</button>
+    </div>
+    <div class="modal-body">
+      <div style="background:rgba(56,189,248,0.1);border:1px solid rgba(56,189,248,0.4);border-radius:6px;padding:10px;margin-bottom:12px;font-size:12px;">
+        아래 <strong>초대 링크</strong>를 친구에게 보내면, 친구는 링크를 열고 <strong>작전 개시</strong>만 누르면 같은 방(<strong id="mp-room-display">K9-ALPHA</strong>)에 들어옵니다. 같은 팀을 고르면 협동, 다른 팀이면 PvP예요.
+      </div>
+      <input class="invite-box" id="mp-invite-link" readonly>
+      <div class="modal-actions" style="margin-top:8px;">
+        <button class="hud-btn active" id="btn-mp-copy-link">🔗 초대 링크 복사</button>
+        <button class="hud-btn" id="btn-mp-share" style="display:none;">공유하기</button>
+      </div>
+      <div class="form-row" style="margin-top:10px;">
+        <label style="font-family:var(--font-mono);font-size:12px;">방 코드 변경:</label>
+        <input type="text" id="mp-room-input" value="K9-ALPHA" style="width:130px;">
+        <button class="hud-btn" id="btn-mp-rejoin">이 방으로 이동</button>
+      </div>
+      <div style="margin-top:12px;border-top:1px solid var(--border);padding-top:10px;">
+        <div style="font-family:var(--font-mono);font-size:12px;color:var(--amber);margin-bottom:6px;">중계 서버 연결 상태</div>
+        <div id="net-status"></div>
+        <div id="net-host" style="font-family:var(--font-mono);font-size:11px;color:var(--muted);margin-top:4px;"></div>
+      </div>
+      <div style="margin-top:12px;border-top:1px solid var(--border);padding-top:10px;">
+        <div style="font-family:var(--font-mono);font-size:12px;color:var(--accent);margin-bottom:6px;">현재 전장 참가자</div>
+        <div id="mp-roster" style="font-family:var(--font-mono);font-size:11px;display:grid;grid-template-columns:1fr 1fr;gap:6px;"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- VICTORY / DEFEAT MODAL -->
+<div class="modal-backdrop" id="end-modal">
+  <div class="modal-card" style="max-width:440px;text-align:center;">
+    <div class="modal-head" style="justify-content:center;">
+      <h2 id="end-title">작전 완료</h2>
+    </div>
+    <div class="modal-body">
+      <p id="end-desc" style="margin-bottom:14px;"></p>
+      <div class="modal-actions" style="justify-content:center;">
+        <button class="fire-btn recon-mode" id="btn-restart">재출격</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+(() => {
+  'use strict';
+
+  // =========================================================================
+  // 1. JSON-DRIVEN GAME ENGINE CONFIGURATION
+  // =========================================================================
+  const DEFAULT_GAME_JSON = {
+    meta: {
+      title: "K9 Thunder 3D — 자주포 정찰·포격 시뮬레이터",
+      version: "3.0.0-webgl-k9",
+      mapSeed: 4092,
+      mapSize: 3200
+    },
+    physics: {
+      gravity: 9.81,
+      airDrag: 0.00014,
+      windSpeed: 5.5,
+      windDirDeg: 62,
+      charges: [125, 165, 205, 250, 305],
+      sphMaxSpeed: 19.5,
+      sphReverseSpeed: 10.5,
+      sphTurnRateDeg: 44,
+      scootSafeDist: 75,
+      scootGraceSec: 9.5
+    },
+    shells: {
+      RECON: {
+        id: "RECON",
+        name: "M-864 낙하산 정찰포탄",
+        deployAltitude: 400,
+        chuteDescentSpeed: 13.5,
+        chuteLifetimeSec: 30,
+        camMaxRadiusMeters: 520,
+        swayAmplitude: 0.042,
+        reloadSec: 3.0
+      },
+      HE: {
+        id: "HE",
+        name: "K307 155mm 고폭탄",
+        blastRadius: 95,
+        directHitRadius: 34,
+        maxDamage: 105,
+        reloadSec: 3.4
+      }
+    },
+    terrain: {
+      maxElevation: 125,
+      ridgeScale: 0.0024,
+      detailScale: 0.0085,
+      treeCount: 220,
+      rockCount: 90,
+      bunkerCount: 14
+    },
+    aiSquad: [
+      { id: "ai_f1", callsign: "포병대위_민수", team: "alpha", personality: "spotter", x: -420, z: -260, skill: 0.82 },
+      { id: "ai_f2", callsign: "K9_서연", team: "alpha", personality: "support", x: 380, z: -340, skill: 0.78 },
+      { id: "ai_e1", callsign: "화력덕후_99", team: "bravo", personality: "sniper", x: -580, z: 1180, skill: 0.76 },
+      { id: "ai_e2", callsign: "강철비_지훈", team: "bravo", personality: "mover", x: 140, z: 1450, skill: 0.80 },
+      { id: "ai_e3", callsign: "포격마스터_태호", team: "bravo", personality: "aggressive", x: 760, z: 1090, skill: 0.74 },
+      { id: "ai_e4", callsign: "북풍_현우", team: "bravo", personality: "camper", x: -120, z: 1860, skill: 0.85 }
+    ]
+  };
+
+  let gameConfig = JSON.parse(JSON.stringify(DEFAULT_GAME_JSON));
+
+  // ---- Room / invite-link helpers ----
+  const URL_PARAMS = new URLSearchParams(location.search);
+  function sanitizeRoom(s) { return String(s || '').toUpperCase().replace(/[^A-Z0-9_-]/g, '').slice(0, 16); }
+  function randomRoom() { const c = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; let r = 'K9-'; for (let i = 0; i < 5; i++) r += c[Math.floor(Math.random() * c.length)]; return r; }
+  function roomSeed(room) { let h = 2166136261; for (const ch of room) { h ^= ch.charCodeAt(0); h = Math.imul(h, 16777619); } return 1000 + ((h >>> 0) % 8999); }
+  function inviteLink(room) { return location.origin + location.pathname + '?room=' + encodeURIComponent(room); }
+  function num(v, def = 0) { const n = Number(v); return Number.isFinite(n) ? n : def; }
+  function cleanName(s, def) { const t = String(s ?? '').replace(/[\u0000-\u001f]/g, '').slice(0, 16).trim(); return t || def; }
+
+  // =========================================================================
+  // 2. PROCEDURAL WEB AUDIO ENGINE
+  // =========================================================================
+  class SoundEngine {
+    constructor() { this.ctx = null; this.muted = false; this.noiseBuffer = null; this.engineOsc = null; this.engineGain = null; }
+    init() {
+      if (this.ctx) { if (this.ctx.state === 'suspended') this.ctx.resume().catch(() => {}); return; }
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) return;
+      this.ctx = new AC();
+      const len = this.ctx.sampleRate * 2;
+      this.noiseBuffer = this.ctx.createBuffer(1, len, this.ctx.sampleRate);
+      const data = this.noiseBuffer.getChannelData(0);
+      for (let i = 0; i < len; i++) data[i] = Math.random() * 2 - 1;
+
+      this.engineOsc = this.ctx.createOscillator();
+      const lp = this.ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 135;
+      this.engineGain = this.ctx.createGain();
+      this.engineOsc.type = 'sawtooth'; this.engineOsc.frequency.value = 34;
+      this.engineGain.gain.value = 0.0001;
+      this.engineOsc.connect(lp); lp.connect(this.engineGain); this.engineGain.connect(this.ctx.destination);
+      this.engineOsc.start();
+    }
+    updateEngine(speedRatio) {
+      if (!this.ctx || !this.engineOsc || !this.engineGain) return;
+      const now = this.ctx.currentTime;
+      if (this.muted || !state.started || state.gameOver) {
+        this.engineGain.gain.setTargetAtTime(0.0001, now, 0.1); return;
+      }
+      this.engineOsc.frequency.setTargetAtTime(34 + Math.abs(speedRatio) * 38, now, 0.08);
+      this.engineGain.gain.setTargetAtTime(0.018 + Math.abs(speedRatio) * 0.048, now, 0.08);
+    }
+    playCannon(isRecon) {
+      if (this.muted || !this.ctx) return;
+      const now = this.ctx.currentTime;
+      const osc = this.ctx.createOscillator(), gain = this.ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(isRecon ? 150 : 118, now);
+      osc.frequency.exponentialRampToValueAtTime(22, now + (isRecon ? 0.35 : 0.62));
+      gain.gain.setValueAtTime(isRecon ? 0.55 : 0.85, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + (isRecon ? 0.45 : 0.82));
+      osc.connect(gain); gain.connect(this.ctx.destination); osc.start(now); osc.stop(now + 0.85);
+
+      const src = this.ctx.createBufferSource(); src.buffer = this.noiseBuffer;
+      const filter = this.ctx.createBiquadFilter(); filter.type = 'lowpass';
+      filter.frequency.setValueAtTime(isRecon ? 1400 : 950, now);
+      filter.frequency.exponentialRampToValueAtTime(115, now + 0.72);
+      const ng = this.ctx.createGain();
+      ng.gain.setValueAtTime(isRecon ? 0.42 : 0.72, now);
+      ng.gain.exponentialRampToValueAtTime(0.001, now + (isRecon ? 0.5 : 0.95));
+      src.connect(filter); filter.connect(ng); ng.connect(this.ctx.destination); src.start(now); src.stop(now + 1.0);
+
+      const clank = this.ctx.createOscillator(), cg = this.ctx.createGain();
+      clank.type = 'triangle';
+      clank.frequency.setValueAtTime(620, now + 0.45); clank.frequency.exponentialRampToValueAtTime(190, now + 0.58);
+      cg.gain.setValueAtTime(0.0001, now); cg.gain.setValueAtTime(0.18, now + 0.45);
+      cg.gain.exponentialRampToValueAtTime(0.001, now + 0.62);
+      clank.connect(cg); cg.connect(this.ctx.destination); clank.start(now + 0.45); clank.stop(now + 0.65);
+    }
+    playExplosion(distMeters) {
+      if (this.muted || !this.ctx) return;
+      const att = Math.max(0.08, Math.min(1, 1 - distMeters / 2800));
+      const now = this.ctx.currentTime;
+      const src = this.ctx.createBufferSource(); src.buffer = this.noiseBuffer;
+      const filter = this.ctx.createBiquadFilter(); filter.type = 'lowpass';
+      filter.frequency.setValueAtTime(480 * att + 140, now); filter.frequency.exponentialRampToValueAtTime(55, now + 1.1);
+      const g = this.ctx.createGain();
+      g.gain.setValueAtTime(0.7 * att, now); g.gain.exponentialRampToValueAtTime(0.001, now + 1.25);
+      src.connect(filter); filter.connect(g); g.connect(this.ctx.destination); src.start(now); src.stop(now + 1.3);
+    }
+    playParachuteDeploy() {
+      if (this.muted || !this.ctx) return;
+      const now = this.ctx.currentTime;
+      const src = this.ctx.createBufferSource(); src.buffer = this.noiseBuffer;
+      const f = this.ctx.createBiquadFilter(); f.type = 'bandpass';
+      f.frequency.setValueAtTime(700, now); f.frequency.exponentialRampToValueAtTime(220, now + 0.45);
+      const g = this.ctx.createGain();
+      g.gain.setValueAtTime(0.32, now); g.gain.exponentialRampToValueAtTime(0.001, now + 0.5);
+      src.connect(f); f.connect(g); g.connect(this.ctx.destination); src.start(now); src.stop(now + 0.55);
+    }
+    playBeep(freq = 880, dur = 0.08, vol = 0.12) {
+      if (this.muted || !this.ctx) return;
+      const now = this.ctx.currentTime;
+      const osc = this.ctx.createOscillator(), g = this.ctx.createGain();
+      osc.type = 'sine'; osc.frequency.setValueAtTime(freq, now);
+      g.gain.setValueAtTime(vol, now); g.gain.exponentialRampToValueAtTime(0.001, now + dur);
+      osc.connect(g); g.connect(this.ctx.destination); osc.start(now); osc.stop(now + dur + 0.02);
+    }
+    playRadioChirp() { if (!this.muted && this.ctx) { this.playBeep(1180, 0.045, 0.06); setTimeout(() => this.playBeep(920, 0.04, 0.045), 55); } }
+    playLockOn() { if (!this.muted && this.ctx) { this.playBeep(1320, 0.06, 0.11); setTimeout(() => this.playBeep(1760, 0.09, 0.12), 75); } }
+  }
+  const sfx = new SoundEngine();
+
+  // =========================================================================
+  // 3. TERRAIN & BALLISTICS MATH
+  // =========================================================================
+  function seededRand(seed) {
+    let s = seed >>> 0;
+    return () => { s = (s * 1664525 + 1013904223) >>> 0; return s / 4294967296; };
+  }
+  function getRoadCenterX(z) { return Math.sin(z * 0.0017 + 0.6) * 320 + Math.cos(z * 0.0007) * 140; }
+  function isOnRoad(x, z) { return Math.abs(x - getRoadCenterX(z)) < 15; }
+  function getTerrainHeight(x, z) {
+    const seed = gameConfig.meta.mapSeed || 4092;
+    const sc = gameConfig.terrain.ridgeScale, ds = gameConfig.terrain.detailScale, maxH = gameConfig.terrain.maxElevation;
+    const ph1 = (seed % 97) * 0.13, ph2 = (seed % 53) * 0.21;
+    const h1 = Math.sin(x * sc + ph1) * Math.cos(z * sc * 0.9 - ph2);
+    const h2 = Math.sin((x * 0.7 + z * 0.7) * sc * 1.45 + ph2) * 0.55;
+    const h3 = Math.cos((x * 0.8 - z * 0.6) * ds + ph1) * 0.22;
+    const raw = (h1 + h2 + h3 + 1.5) / 3.2;
+    const distFromCenter = Math.hypot(x, z - 600);
+    const rim = Math.min(1, distFromCenter / 1800) * 0.35;
+    return Math.max(0, (raw * 0.72 + rim) * maxH);
+  }
+  function getTerrainNormal(x, z) {
+    const e = 8;
+    const nx = getTerrainHeight(x - e, z) - getTerrainHeight(x + e, z);
+    const nz = getTerrainHeight(x, z - e) - getTerrainHeight(x, z + e);
+    const ny = 2 * e, len = Math.hypot(nx, ny, nz) || 1;
+    return { x: nx / len, y: ny / len, z: nz / len };
+  }
+  function degToRad(d) { return d * Math.PI / 180; }
+  function radToDeg(r) { return r * 180 / Math.PI; }
+  function normAngle(a) { return ((a % 360) + 360) % 360; }
+
+  function getWindVec() {
+    const rad = degToRad(gameConfig.physics.windDirDeg);
+    return { x: Math.sin(rad) * gameConfig.physics.windSpeed, z: Math.cos(rad) * gameConfig.physics.windSpeed };
+  }
+  function simulateBallistics(startX, startY, startZ, azDeg, elDeg, chargeIdx, deployAlt = 0) {
+    const v0 = gameConfig.physics.charges[chargeIdx] || 205;
+    const az = degToRad(azDeg), el = degToRad(elDeg);
+    const g = gameConfig.physics.gravity, drag = gameConfig.physics.airDrag, wind = getWindVec();
+    let x = startX, y = startY, z = startZ;
+    let vx = Math.sin(az) * Math.cos(el) * v0, vy = Math.sin(el) * v0, vz = Math.cos(az) * Math.cos(el) * v0;
+    const dt = 0.08; let t = 0;
+    for (let i = 0; i < 600; i++) {
+      const rvx = vx - wind.x, rvz = vz - wind.z, spd = Math.hypot(rvx, vy, rvz);
+      vx += (-drag * spd * rvx) * dt; vy += (-g - drag * spd * vy) * dt; vz += (-drag * spd * rvz) * dt;
+      x += vx * dt; y += vy * dt; z += vz * dt; t += dt;
+      if (t > 0.3) {
+        const gy = getTerrainHeight(x, z);
+        if (y <= gy) break;
+        if (deployAlt > 0 && vy < 0 && y - gy <= deployAlt) break;
+      }
+    }
+    return { impactX: x, impactZ: z, range: Math.hypot(x - startX, z - startZ), tof: t };
+  }
+  // fromY = hull ground height; shells start at the muzzle tip (depends on az/el)
+  function simFromHull(x, y, z, az, el, c) {
+    const m = getMuzzle(x, y, z, az, el);
+    return simulateBallistics(m.x, m.y, m.z, az, el, c);
+  }
+  function solveFiringSolution(fromX, fromY, fromZ, tgtX, tgtZ) {
+    const dx = tgtX - fromX, dz = tgtZ - fromZ, dist = Math.hypot(dx, dz);
+    const baseAz = normAngle(radToDeg(Math.atan2(dx, dz)));
+    let best = { az: baseAz, el: 35, charge: 2, err: 99999, tof: 10 };
+    const LO = 8, HI = 44; // low-angle branch: range grows monotonically with elevation here
+    for (let c = 0; c < gameConfig.physics.charges.length; c++) {
+      let az = baseAz, el = 30, sim = null;
+      for (let pass = 0; pass < 2; pass++) {
+        let lo = LO, hi = HI;
+        for (let iter = 0; iter < 11; iter++) {
+          const mid = (lo + hi) * 0.5;
+          const s = simFromHull(fromX, fromY, fromZ, az, mid, c);
+          if (Math.hypot(s.impactX - fromX, s.impactZ - fromZ) < dist) lo = mid; else hi = mid;
+        }
+        el = (lo + hi) * 0.5;
+        sim = simFromHull(fromX, fromY, fromZ, az, el, c);
+        let azDiff = baseAz - normAngle(radToDeg(Math.atan2(sim.impactX - fromX, sim.impactZ - fromZ)));
+        if (azDiff > 180) azDiff -= 360; if (azDiff < -180) azDiff += 360;
+        az = normAngle(az + azDiff);
+      }
+      sim = simFromHull(fromX, fromY, fromZ, az, el, c);
+      const err = Math.hypot(sim.impactX - tgtX, sim.impactZ - tgtZ);
+      // prefer accurate solutions; among equally accurate ones prefer the lower charge (less wear, steeper fall)
+      if (err < best.err - 2) best = { az, el, charge: c, err, tof: sim.tof };
+    }
+    return best;
+  }
+
+  // =========================================================================
+  // 4. WORLD STATE
+  // =========================================================================
+  const state = {
+    started: false, gameOver: false, time: 0,
+    viewMode: 'THIRD', // Start in stunning 3rd-person K9 view!
+    lastTankView: 'THIRD',
+    hudHidden: false, thermal: false, activeReconId: null,
+    localId: 'p_' + Math.random().toString(36).slice(2, 8),
+    roomCode: 'K9-ALPHA',
+    player: {
+      callsign: '포수_민준', team: 'alpha',
+      x: 0, y: 0, z: -220,
+      hullAz: 24, az: 12, el: 32, targetAz: 12, targetEl: 32,
+      vel: 0, trackPhase: 0,
+      charge: 2, ammo: 'RECON', hp: 100, maxHp: 100,
+      reloadTimer: 0, recoil: 0, shake: 0, kills: 0, speedKmh: 0
+    },
+    scoot: { active: false, fireX: 0, fireZ: 0, timer: 0, counterFired: false },
+    markedTarget: null,
+    units: [], shells: [], reconChutes: [], explosions: [], smokePlumes: [], dustParticles: [],
+    trees: [], packetLog: [], keys: {},
+    pointer: { down: false, x: 0, y: 0, lastX: 0, lastY: 0, hoverWorld: null, hoverUnit: null },
+    jsonTab: 'config',
+    predictImpact: null, impactMarks: [], reconTags: [], pipRect: null, lockPromptAt: 0
+  };
+
+  // Muzzle tip of the 155mm barrel in world space (turret pivot + 9.4m barrel)
+  function getMuzzle(x, y, z, azDeg, elDeg) {
+    const az = degToRad(azDeg), el = degToRad(elDeg);
+    const fwd = 1.2 + 9.4 * Math.cos(el), up = 2.9 + 9.4 * Math.sin(el);
+    return { x: x + Math.sin(az) * fwd, y: y + up, z: z + Math.cos(az) * fwd };
+  }
+  function getActiveChute() {
+    return state.reconChutes.find(c => c.id === state.activeReconId) || state.reconChutes.find(c => c.isLocal) || null;
+  }
+  function chuteScanRadius(ch) {
+    const cfg = gameConfig.shells.RECON;
+    return Math.max(160, Math.min(cfg.camMaxRadiusMeters, Math.max(25, ch.y - getTerrainHeight(ch.x, ch.z)) * 1.4));
+  }
+
+  // =========================================================================
+  // 5. THREE.JS WEBGL 3D ENGINE + AUTHENTIC K9 THUNDER PROCEDURAL MODEL
+  // =========================================================================
+  const hasThree = typeof window.THREE !== 'undefined';
+  let scene, camera, renderer, sunLight;
+  let terrainMesh = null, envGroup = null;
+  let playerK9 = null;
+  const unitMeshes = new Map();
+  const shellMeshes = new Map();
+  const chuteMeshes = new Map();
+  const fxGroup = hasThree ? new THREE.Group() : null;
+  let targetBeaconMesh = null;
+
+  // Procedural Authentic ROK Army K9 4-Color Woodland Camouflage Texture
+  function createK9CamoTexture(isFriendly) {
+    const c = document.createElement('canvas');
+    c.width = 512; c.height = 512;
+    const g = c.getContext('2d');
+    const rand = seededRand(isFriendly ? 9001 : 4040);
+
+    // Base olive / aggressor tan
+    g.fillStyle = isFriendly ? '#4b5a3c' : '#574f45';
+    g.fillRect(0, 0, 512, 512);
+
+    const palette = isFriendly
+      ? ['#b8a06e', '#58412f', '#222622', '#566844'] // ROK K9 Sand, Brown, Black, Olive
+      : ['#7c6e58', '#3c3732', '#201e1c', '#635648'];
+
+    for (let i = 0; i < 42; i++) {
+      g.fillStyle = palette[i % palette.length];
+      g.beginPath();
+      const cx = rand() * 512, cy = rand() * 512;
+      const rx = 38 + rand() * 75, ry = 26 + rand() * 55;
+      g.ellipse(cx, cy, rx, ry, rand() * Math.PI, 0, Math.PI * 2);
+      g.fill();
+    }
+
+    // Subtle armor plate panel seams & bolts
+    g.strokeStyle = 'rgba(0,0,0,0.22)';
+    g.lineWidth = 2;
+    for (let y = 64; y < 512; y += 128) {
+      g.beginPath(); g.moveTo(0, y); g.lineTo(512, y); g.stroke();
+    }
+    for (let x = 128; x < 512; x += 128) {
+      g.beginPath(); g.moveTo(x, 0); g.lineTo(x, 512); g.stroke();
+    }
+    g.fillStyle = 'rgba(20,24,20,0.35)';
+    for (let i = 0; i < 60; i++) {
+      g.fillRect(Math.floor(rand() * 500), Math.floor(rand() * 500), 3, 3);
+    }
+
+    const tex = new THREE.CanvasTexture(c);
+    tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+    return tex;
+  }
+
+  function createTrackTexture() {
+    const c = document.createElement('canvas');
+    c.width = 256; c.height = 64;
+    const g = c.getContext('2d');
+    g.fillStyle = '#252321';
+    g.fillRect(0, 0, 256, 64);
+    for (let x = 0; x < 256; x += 16) {
+      g.fillStyle = '#3d3730'; // dusty metal track shoe
+      g.fillRect(x + 2, 4, 12, 56);
+      g.fillStyle = '#171717'; // rubber track pad
+      g.fillRect(x + 4, 10, 8, 20);
+      g.fillRect(x + 4, 34, 8, 20);
+    }
+    const tex = new THREE.CanvasTexture(c);
+    tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+    tex.repeat.set(8, 1);
+    return tex;
+  }
+
+  let matK9Friend = null, matK9Enemy = null, matDarkMetal = null, matOliveWheel = null, matRubber = null, matGlass = null, matPinkMarker = null;
+
+  function initSharedMaterials() {
+    matK9Friend = new THREE.MeshStandardMaterial({ map: createK9CamoTexture(true), roughness: 0.72, metalness: 0.18 });
+    matK9Enemy = new THREE.MeshStandardMaterial({ map: createK9CamoTexture(false), roughness: 0.74, metalness: 0.16 });
+    matDarkMetal = new THREE.MeshStandardMaterial({ color: 0x262a26, roughness: 0.55, metalness: 0.55 });
+    matOliveWheel = new THREE.MeshStandardMaterial({ color: 0x4b583d, roughness: 0.65, metalness: 0.25 });
+    matRubber = new THREE.MeshStandardMaterial({ color: 0x1a1c1a, roughness: 0.9, metalness: 0.05 });
+    matGlass = new THREE.MeshStandardMaterial({ color: 0x122633, roughness: 0.15, metalness: 0.85 });
+    matPinkMarker = new THREE.MeshBasicMaterial({ color: 0xe84a7a }); // Iconic K9 front fender safety stripe!
+  }
+
+  // Build Hyper-Detailed Procedural 3D K9 Thunder Self-Propelled Howitzer!
+  function buildK9Mesh(isFriendly) {
+    const root = new THREE.Group();
+    const camoMat = isFriendly ? matK9Friend : matK9Enemy;
+    const trackTex = createTrackTexture();
+    const trackMat = new THREE.MeshStandardMaterial({ map: trackTex, roughness: 0.88, metalness: 0.22 });
+
+    const hullGroup = new THREE.Group();
+    root.add(hullGroup);
+
+    // 1. Main Lower & Sloped Upper Armored Hull (K9 proportions: 3.4m wide, 7.5m long)
+    const lowerHull = new THREE.Mesh(new THREE.BoxGeometry(2.7, 0.95, 6.8), camoMat);
+    lowerHull.position.set(0, 1.15, 0);
+    lowerHull.castShadow = true; lowerHull.receiveShadow = true;
+    hullGroup.add(lowerHull);
+
+    const upperDeck = new THREE.Mesh(new THREE.BoxGeometry(3.35, 0.58, 7.2), camoMat);
+    upperDeck.position.set(0, 1.72, 0.05);
+    upperDeck.castShadow = true; upperDeck.receiveShadow = true;
+    hullGroup.add(upperDeck);
+
+    // Sloped front glacis armor plate
+    const glacis = new THREE.Mesh(new THREE.BoxGeometry(3.3, 0.45, 1.5), camoMat);
+    glacis.position.set(0, 1.56, 3.65);
+    glacis.rotation.x = 0.42;
+    glacis.castShadow = true;
+    hullGroup.add(glacis);
+
+    // Front fenders with ROK K9 iconic pink/red safety reflectors + twin caged headlights
+    for (const side of [-1, 1]) {
+      const fender = new THREE.Mesh(new THREE.BoxGeometry(0.68, 0.16, 0.9), camoMat);
+      fender.position.set(side * 1.38, 1.62, 3.85);
+      fender.rotation.x = 0.28;
+      hullGroup.add(fender);
+
+      const stripe = new THREE.Mesh(new THREE.BoxGeometry(0.66, 0.07, 0.14), matPinkMarker);
+      stripe.position.set(side * 1.38, 1.54, 4.26);
+      hullGroup.add(stripe);
+
+      // Headlight guard + lamp
+      const hlBox = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.22, 0.24), matDarkMetal);
+      hlBox.position.set(side * 1.32, 2.08, 3.42);
+      hullGroup.add(hlBox);
+      const lamp = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 0.06, 10), new THREE.MeshBasicMaterial({ color: 0xfff5d6 }));
+      lamp.rotation.x = Math.PI * 0.5;
+      lamp.position.set(side * 1.32, 2.08, 3.54);
+      hullGroup.add(lamp);
+
+      // Ribbed K9 Side Skirts (3 horizontal armor ribs along each side!)
+      for (let r = 0; r < 3; r++) {
+        const rib = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.11, 5.1), matOliveWheel);
+        rib.position.set(side * 1.72, 1.58 + r * 0.16, -0.35);
+        rib.castShadow = true;
+        hullGroup.add(rib);
+      }
+    }
+
+    // Front Deck Barrel Travel Lock (포신 고정대) & Engine Louvers
+    const travelLock = new THREE.Mesh(new THREE.BoxGeometry(0.65, 0.28, 1.2), matDarkMetal);
+    travelLock.position.set(0, 2.12, 2.75);
+    hullGroup.add(travelLock);
+    const engineGrille = new THREE.Mesh(new THREE.BoxGeometry(1.4, 0.08, 1.6), matDarkMetal);
+    engineGrille.position.set(0.62, 2.04, 2.2);
+    hullGroup.add(engineGrille);
+
+    // 2. Exposed Heavy Tracked Suspension: 6 Dished Roadwheels + Sprocket + Idler per side!
+    const wheels = [];
+    for (const side of [-1, 1]) {
+      const tx = side * 1.48;
+      // Track belt wrap (top run, bottom run, front & rear sloped runs)
+      const trackBottom = new THREE.Mesh(new THREE.BoxGeometry(0.56, 0.14, 5.7), trackMat);
+      trackBottom.position.set(tx, 0.09, -0.05); hullGroup.add(trackBottom);
+      const trackTop = new THREE.Mesh(new THREE.BoxGeometry(0.56, 0.14, 6.7), trackMat);
+      trackTop.position.set(tx, 1.24, 0.05); hullGroup.add(trackTop);
+      const trackFront = new THREE.Mesh(new THREE.BoxGeometry(0.56, 0.14, 1.15), trackMat);
+      trackFront.position.set(tx, 0.65, 3.22); trackFront.rotation.x = -0.95; hullGroup.add(trackFront);
+      const trackRear = new THREE.Mesh(new THREE.BoxGeometry(0.56, 0.14, 1.15), trackMat);
+      trackRear.position.set(tx, 0.65, -3.15); trackRear.rotation.x = 0.95; hullGroup.add(trackRear);
+
+      // 6 Deeply Dished Roadwheels
+      for (let i = 0; i < 6; i++) {
+        const wz = -2.42 + i * 0.96;
+        const wGrp = new THREE.Group();
+        wGrp.position.set(tx, 0.56, wz);
+
+        const tire = new THREE.Mesh(new THREE.CylinderGeometry(0.45, 0.45, 0.50, 16), matRubber);
+        tire.rotation.z = Math.PI * 0.5;
+        wGrp.add(tire);
+        const rim = new THREE.Mesh(new THREE.CylinderGeometry(0.37, 0.37, 0.53, 16), matOliveWheel);
+        rim.rotation.z = Math.PI * 0.5;
+        wGrp.add(rim);
+        const hub = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.14, 0.57, 10), matDarkMetal);
+        hub.rotation.z = Math.PI * 0.5;
+        wGrp.add(hub);
+
+        hullGroup.add(wGrp);
+        wheels.push(wGrp);
+      }
+
+      // Front Drive Sprocket & Rear Idler Wheel
+      const sprocket = new THREE.Mesh(new THREE.CylinderGeometry(0.40, 0.40, 0.54, 12), matDarkMetal);
+      sprocket.rotation.z = Math.PI * 0.5; sprocket.position.set(tx, 0.94, 3.35);
+      hullGroup.add(sprocket); wheels.push(sprocket);
+
+      const idler = new THREE.Mesh(new THREE.CylinderGeometry(0.38, 0.38, 0.52, 12), matOliveWheel);
+      idler.rotation.z = Math.PI * 0.5; idler.position.set(tx, 0.92, -3.32);
+      hullGroup.add(idler); wheels.push(idler);
+    }
+
+    // 3. Signature K9 Angular Rear-Mounted Turret
+    const turretGroup = new THREE.Group();
+    turretGroup.position.set(0, 2.02, -0.75);
+    root.add(turretGroup);
+
+    // Main faceted K9 turret body (tall, angular, slightly tapered roof)
+    const turretCore = new THREE.Mesh(new THREE.BoxGeometry(2.92, 1.32, 4.25), camoMat);
+    turretCore.position.set(0, 0.68, -0.25);
+    turretCore.castShadow = true; turretCore.receiveShadow = true;
+    turretGroup.add(turretCore);
+
+    // Sloped turret side bustle panels + side access hatches
+    for (const side of [-1, 1]) {
+      const cheek = new THREE.Mesh(new THREE.BoxGeometry(0.22, 1.24, 4.05), camoMat);
+      cheek.position.set(side * 1.48, 0.66, -0.25);
+      cheek.rotation.z = side * 0.12;
+      turretGroup.add(cheek);
+
+      // Side hatch handle detail
+      const hatch = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.72, 0.95), matDarkMetal);
+      hatch.position.set(side * 1.58, 0.68, -0.6);
+      turretGroup.add(hatch);
+    }
+
+    // Turret front cheek armor & Gunner's Panoramic Optics Box (right front)
+    const opticsBox = new THREE.Mesh(new THREE.BoxGeometry(0.56, 0.62, 0.65), camoMat);
+    opticsBox.position.set(0.95, 0.78, 2.0);
+    turretGroup.add(opticsBox);
+    const opticsLens = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.34, 0.08), matGlass);
+    opticsLens.position.set(0.95, 0.84, 2.32);
+    turretGroup.add(opticsLens);
+
+    // Commander's Cupola, Open Hatch & K6 12.7mm Roof Heavy Machine Gun!
+    const cupola = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.46, 0.24, 12), camoMat);
+    cupola.position.set(0.75, 1.42, 0.65);
+    turretGroup.add(cupola);
+    const openHatch = new THREE.Mesh(new THREE.CylinderGeometry(0.38, 0.38, 0.07, 12), camoMat);
+    openHatch.position.set(0.75, 1.76, 0.32);
+    openHatch.rotation.x = -1.2;
+    turretGroup.add(openHatch);
+
+    // K6 12.7mm Heavy Machine Gun
+    const mgBody = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.16, 0.72), matDarkMetal);
+    mgBody.position.set(0.28, 1.65, 1.05);
+    turretGroup.add(mgBody);
+    const mgBarrel = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.03, 0.95, 8), matDarkMetal);
+    mgBarrel.rotation.x = Math.PI * 0.5;
+    mgBarrel.position.set(0.28, 1.68, 1.82);
+    turretGroup.add(mgBarrel);
+
+    // Rear Turret Stowage Rack & Rolled Tarp
+    const rack = new THREE.Mesh(new THREE.BoxGeometry(2.3, 0.34, 1.15), matDarkMetal);
+    rack.position.set(0, 1.46, -1.55);
+    turretGroup.add(rack);
+    const tarp = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.22, 1.85, 10), matOliveWheel);
+    tarp.rotation.z = Math.PI * 0.5;
+    tarp.position.set(0, 1.56, -1.55);
+    turretGroup.add(tarp);
+
+    // Twin Flexible Whip Antennas
+    const antennas = [];
+    for (const side of [-1.1, 1.1]) {
+      const ant = new THREE.Mesh(new THREE.CylinderGeometry(0.015, 0.025, 3.1, 6), matDarkMetal);
+      ant.position.set(side, 2.85, -2.1);
+      turretGroup.add(ant);
+      antennas.push(ant);
+    }
+
+    // 4. 155mm 52-Caliber Elevating Gun Assembly (Mantlet + Camo Barrel + Fume Extractor + Multi-Slotted Muzzle Brake!)
+    const gunPivot = new THREE.Group();
+    gunPivot.position.set(0, 0.88, 1.95);
+    turretGroup.add(gunPivot);
+
+    // Heavy angular mantlet / recuperator housing
+    const mantlet = new THREE.Mesh(new THREE.BoxGeometry(1.18, 0.95, 1.35), camoMat);
+    mantlet.position.set(0, 0, 0.45);
+    mantlet.castShadow = true;
+    gunPivot.add(mantlet);
+
+    const recoilGroup = new THREE.Group();
+    gunPivot.add(recoilGroup);
+
+    // Base reinforced barrel shroud
+    const bBase = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.27, 1.8, 14), matDarkMetal);
+    bBase.rotation.x = Math.PI * 0.5; bBase.position.set(0, 0, 1.55);
+    bBase.castShadow = true; recoilGroup.add(bBase);
+
+    // Main L/52 Camo-Striped Thermal Sleeve Barrel (7.8m long!)
+    const bMain = new THREE.Mesh(new THREE.CylinderGeometry(0.145, 0.19, 6.2, 16), camoMat);
+    bMain.rotation.x = Math.PI * 0.5; bMain.position.set(0, 0, 5.4);
+    bMain.castShadow = true; recoilGroup.add(bMain);
+
+    // Iconic Cylindrical Bore Evacuator / Fume Extractor (배연기) mid-barrel
+    const evacuator = new THREE.Mesh(new THREE.CylinderGeometry(0.26, 0.24, 1.15, 16), camoMat);
+    evacuator.rotation.x = Math.PI * 0.5; evacuator.position.set(0, 0, 4.45);
+    evacuator.castShadow = true; recoilGroup.add(evacuator);
+    const evacRing = new THREE.Mesh(new THREE.CylinderGeometry(0.27, 0.27, 0.14, 16), matDarkMetal);
+    evacRing.rotation.x = Math.PI * 0.5; evacRing.position.set(0, 0, 5.02);
+    recoilGroup.add(evacRing);
+
+    // Iconic K9 Multi-Slotted Pepperpot Muzzle Brake (다공형 제퇴기)
+    const brake = new THREE.Mesh(new THREE.CylinderGeometry(0.23, 0.21, 1.05, 16), matOliveWheel);
+    brake.rotation.x = Math.PI * 0.5; brake.position.set(0, 0, 8.85);
+    brake.castShadow = true; recoilGroup.add(brake);
+    // 3 dark baffled vent slots on both sides of the muzzle brake!
+    for (let s = 0; s < 3; s++) {
+      const slot = new THREE.Mesh(new THREE.BoxGeometry(0.49, 0.11, 0.16), matRubber);
+      slot.position.set(0, 0, 8.52 + s * 0.26);
+      recoilGroup.add(slot);
+    }
+    const muzzleBore = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 0.08, 12), matRubber);
+    muzzleBore.rotation.x = Math.PI * 0.5; muzzleBore.position.set(0, 0, 9.38);
+    recoilGroup.add(muzzleBore);
+
+    // Volumetric Muzzle Flash Mesh (hidden until firing)
+    const flashMat = new THREE.MeshBasicMaterial({ color: 0xffd269, transparent: true, opacity: 0.92 });
+    const muzzleFlash = new THREE.Mesh(new THREE.SphereGeometry(1.5, 12, 12), flashMat);
+    muzzleFlash.scale.set(1.0, 1.0, 2.2);
+    muzzleFlash.position.set(0, 0, 10.2);
+    muzzleFlash.visible = false;
+    recoilGroup.add(muzzleFlash);
+
+    return { root, hullGroup, turretGroup, gunPivot, recoilGroup, wheels, antennas, trackTex, muzzleFlash };
+  }
+
+  function initThreeScene() {
+    if (!hasThree) return;
+    const container = document.getElementById('webgl-container');
+    scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x9bc4d8);
+    scene.fog = new THREE.FogExp2(0x9bb8c4, 0.00052);
+
+    camera = new THREE.PerspectiveCamera(56, window.innerWidth / window.innerHeight, 0.4, 4200);
+
+    renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.08;
+    container.appendChild(renderer.domElement);
+
+    // Bright natural Korean spring daylight lighting
+    const hemi = new THREE.HemisphereLight(0xdff2ff, 0x3b4d32, 0.85);
+    scene.add(hemi);
+
+    sunLight = new THREE.DirectionalLight(0xfff6e0, 1.45);
+    sunLight.position.set(420, 540, 380);
+    sunLight.castShadow = true;
+    sunLight.shadow.mapSize.width = 2048;
+    sunLight.shadow.mapSize.height = 2048;
+    sunLight.shadow.camera.near = 50;
+    sunLight.shadow.camera.far = 1800;
+    const d = 140;
+    sunLight.shadow.camera.left = -d; sunLight.shadow.camera.right = d;
+    sunLight.shadow.camera.top = d; sunLight.shadow.camera.bottom = -d;
+    sunLight.shadow.bias = -0.0006;
+    scene.add(sunLight);
+    scene.add(sunLight.target);
+
+    // Sky Dome with soft gradient
+    const skyGeo = new THREE.SphereGeometry(3600, 24, 16);
+    const skyCanvas = document.createElement('canvas');
+    skyCanvas.width = 16; skyCanvas.height = 256;
+    const sg = skyCanvas.getContext('2d');
+    const grad = sg.createLinearGradient(0, 0, 0, 256);
+    grad.addColorStop(0, '#2a6298');
+    grad.addColorStop(0.42, '#6ba4cc');
+    grad.addColorStop(0.55, '#c8dce3');
+    grad.addColorStop(1, '#5d7355');
+    sg.fillStyle = grad; sg.fillRect(0, 0, 16, 256);
+    const skyMesh = new THREE.Mesh(skyGeo, new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(skyCanvas), side: THREE.BackSide, fog: false }));
+    scene.add(skyMesh);
+
+    initSharedMaterials();
+    scene.add(fxGroup);
+
+    // Target Beacon Ring
+    const bGeo = new THREE.RingGeometry(10, 14, 24);
+    bGeo.rotateX(-Math.PI * 0.5);
+    targetBeaconMesh = new THREE.Mesh(bGeo, new THREE.MeshBasicMaterial({ color: 0xf5b942, side: THREE.DoubleSide }));
+    targetBeaconMesh.visible = false;
+    scene.add(targetBeaconMesh);
+
+    playerK9 = buildK9Mesh(true);
+    scene.add(playerK9.root);
+
+    // Auto-scanning parachute recon camera (real 3D view from the chute)
+    reconCam = new THREE.PerspectiveCamera(62, 1, 1, 5000);
+
+    // Predicted impact ring (shows where the current aim lands) — visible through hills
+    const pGeo = new THREE.RingGeometry(0.9, 1, 64); pGeo.rotateX(-Math.PI * 0.5);
+    predictRingMesh = new THREE.Mesh(pGeo, new THREE.MeshBasicMaterial({ color: 0x38bdf8, transparent: true, opacity: 0.75, side: THREE.DoubleSide, depthTest: false, fog: false }));
+    predictRingMesh.renderOrder = 10; predictRingMesh.visible = false;
+    scene.add(predictRingMesh);
+    const pdGeo = new THREE.CircleGeometry(1, 20); pdGeo.rotateX(-Math.PI * 0.5);
+    predictDotMesh = new THREE.Mesh(pdGeo, new THREE.MeshBasicMaterial({ color: 0x38bdf8, transparent: true, opacity: 0.9, side: THREE.DoubleSide, depthTest: false, fog: false }));
+    predictDotMesh.renderOrder = 11; predictDotMesh.visible = false;
+    scene.add(predictDotMesh);
+
+    // Recon scan radius ring on the ground under the active chute
+    const sGeo = new THREE.RingGeometry(0.975, 1, 72); sGeo.rotateX(-Math.PI * 0.5);
+    scanRingMesh = new THREE.Mesh(sGeo, new THREE.MeshBasicMaterial({ color: 0x52e078, transparent: true, opacity: 0.55, side: THREE.DoubleSide, depthTest: false, fog: false }));
+    scanRingMesh.renderOrder = 9; scanRingMesh.visible = false;
+    scene.add(scanRingMesh);
+
+    fxSphereGeo = new THREE.SphereGeometry(1, 12, 10);
+  }
+
+  // ---- Pooled FX spheres (no per-frame geometry allocation → no memory leak / slowdown) ----
+  let cloudGroup = null;
+  let reconCam = null, predictRingMesh = null, predictDotMesh = null, scanRingMesh = null, fxSphereGeo = null;
+  const fxPool = []; let fxUsed = 0;
+  function fxSphere(x, y, z, r, color, opacity) {
+    let m = fxPool[fxUsed];
+    if (!m) {
+      m = new THREE.Mesh(fxSphereGeo, new THREE.MeshBasicMaterial({ transparent: true, depthWrite: false }));
+      fxGroup.add(m); fxPool.push(m);
+    }
+    m.visible = true; m.position.set(x, y, z); m.scale.setScalar(Math.max(0.05, r));
+    m.material.color.setHex(color); m.material.opacity = opacity;
+    fxUsed++;
+  }
+
+  function rebuildThreeEnvironment() {
+    if (!hasThree || !scene) return;
+    if (terrainMesh) { scene.remove(terrainMesh); terrainMesh.geometry.dispose(); }
+    if (envGroup) { scene.remove(envGroup); }
+
+    // High-res vertex-colored Korean mountain terrain mesh!
+    const size = 3400, segs = 128;
+    const geo = new THREE.PlaneGeometry(size, size, segs, segs);
+    geo.rotateX(-Math.PI * 0.5);
+    const pos = geo.attributes.position;
+    const colors = new Float32Array(pos.count * 3);
+    const cGrass = new THREE.Color(0x4b6e3c);
+    const cSpring = new THREE.Color(0x6d8e46);
+    const cForest = new THREE.Color(0x314a2b);
+    const cRoad = new THREE.Color(0x9b8a6b);
+    const cRock = new THREE.Color(0x6c6f65);
+    const tmp = new THREE.Color();
+
+    for (let i = 0; i < pos.count; i++) {
+      const wx = pos.getX(i);
+      const wz = pos.getZ(i) + 500;
+      const wy = getTerrainHeight(wx, wz);
+      pos.setY(i, wy);
+      pos.setZ(i, wz);
+
+      if (isOnRoad(wx, wz)) {
+        tmp.copy(cRoad);
+      } else {
+        const elevT = Math.min(1, wy / gameConfig.terrain.maxElevation);
+        const n = Math.sin(wx * 0.025) * Math.cos(wz * 0.025) * 0.5 + 0.5;
+        tmp.copy(cGrass).lerp(cSpring, n * 0.65);
+        if (elevT > 0.52) tmp.lerp(cForest, (elevT - 0.52) * 1.4);
+        if (elevT > 0.82) tmp.lerp(cRock, (elevT - 0.82) * 3.0);
+      }
+      colors[i * 3] = tmp.r; colors[i * 3 + 1] = tmp.g; colors[i * 3 + 2] = tmp.b;
+    }
+    geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+    geo.computeVertexNormals();
+
+    terrainMesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({
+      vertexColors: true, roughness: 0.92, metalness: 0.03
+    }));
+    terrainMesh.receiveShadow = true;
+    scene.add(terrainMesh);
+
+    // 3D Foliage, Boulders, Concrete Barriers & Soft Volumetric Clouds
+    envGroup = new THREE.Group();
+    const rand = seededRand(gameConfig.meta.mapSeed + 77);
+    const half = gameConfig.meta.mapSize * 0.45;
+    state.trees = [];
+
+    const trunkMat = new THREE.MeshStandardMaterial({ color: 0x4b3827, roughness: 0.95 });
+    const leafMat1 = new THREE.MeshStandardMaterial({ color: 0x35592b, roughness: 0.88 });
+    const leafMat2 = new THREE.MeshStandardMaterial({ color: 0x4e7535, roughness: 0.88 });
+    const rockMat = new THREE.MeshStandardMaterial({ color: 0x6f736b, roughness: 0.92 });
+    const wallMat = new THREE.MeshStandardMaterial({ color: 0xc2b89f, roughness: 0.9 });
+
+    const trunkGeo = new THREE.CylinderGeometry(0.35, 0.55, 3.2, 6);
+    const cone1Geo = new THREE.ConeGeometry(3.2, 6.8, 7);
+    const cone2Geo = new THREE.ConeGeometry(2.3, 5.2, 7);
+
+    for (let i = 0; i < gameConfig.terrain.treeCount; i++) {
+      const x = (rand() * 2 - 1) * half;
+      const z = (rand() * 2 - 1) * half + 420;
+      if (isOnRoad(x, z) || Math.hypot(x, z + 220) < 32) continue;
+      const y = getTerrainHeight(x, z);
+      const sc = 0.85 + rand() * 0.85;
+      state.trees.push({ x, y, z, size: 7.5 * sc });
+
+      const tg = new THREE.Group();
+      tg.position.set(x, y, z);
+      tg.scale.setScalar(sc);
+      const tr = new THREE.Mesh(trunkGeo, trunkMat); tr.position.y = 1.6; tg.add(tr);
+      const lMat = rand() > 0.45 ? leafMat1 : leafMat2;
+      const c1 = new THREE.Mesh(cone1Geo, lMat); c1.position.y = 5.4; c1.castShadow = true; tg.add(c1);
+      const c2 = new THREE.Mesh(cone2Geo, lMat); c2.position.y = 8.4; tg.add(c2);
+      envGroup.add(tg);
+    }
+
+    const rockGeo = new THREE.DodecahedronGeometry(3.2, 0);
+    for (let i = 0; i < (gameConfig.terrain.rockCount || 90); i++) {
+      const x = (rand() * 2 - 1) * half, z = (rand() * 2 - 1) * half + 420;
+      if (isOnRoad(x, z)) continue;
+      const r = new THREE.Mesh(rockGeo, rockMat);
+      r.position.set(x, getTerrainHeight(x, z) + 0.8, z);
+      r.scale.set(0.7 + rand() * 1.4, 0.45 + rand() * 0.8, 0.7 + rand() * 1.4);
+      r.rotation.set(rand(), rand(), rand());
+      envGroup.add(r);
+    }
+
+    // Concrete artillery revetment walls & sandbags near spawn and hills
+    const wallGeo = new THREE.BoxGeometry(14, 2.2, 1.2);
+    for (let i = 0; i < (gameConfig.terrain.bunkerCount || 14); i++) {
+      const x = (rand() * 2 - 1) * (half * 0.8), z = (rand() * 2 - 1) * (half * 0.8) + 450;
+      const wMesh = new THREE.Mesh(wallGeo, wallMat);
+      wMesh.position.set(x, getTerrainHeight(x, z) + 1.0, z);
+      wMesh.rotation.y = rand() * Math.PI;
+      wMesh.castShadow = true; wMesh.receiveShadow = true;
+      envGroup.add(wMesh);
+    }
+
+    // Soft 3D puffy cloud clusters high in the sky
+    const cloudMat = new THREE.MeshBasicMaterial({ color: 0xf4f8fa, transparent: true, opacity: 0.58 });
+    cloudGroup = new THREE.Group(); envGroup.add(cloudGroup);
+    const puffGeo = new THREE.SphereGeometry(48, 8, 8);
+    for (let i = 0; i < 18; i++) {
+      const cg = new THREE.Group();
+      const ang = rand() * Math.PI * 2, dist = 900 + rand() * 1500;
+      cg.position.set(Math.sin(ang) * dist, 380 + rand() * 220, Math.cos(ang) * dist + 400);
+      for (let p = 0; p < 3; p++) {
+        const pf = new THREE.Mesh(puffGeo, cloudMat);
+        pf.position.set((p - 1) * 44, (rand() - 0.5) * 14, (rand() - 0.5) * 28);
+        pf.scale.set(1.3 + rand() * 0.6, 0.36 + rand() * 0.14, 0.9 + rand() * 0.4);
+        cg.add(pf);
+      }
+      cloudGroup.add(cg);
+    }
+
+    scene.add(envGroup);
+  }
+
+  function syncUnitK9Mesh(u) {
+    if (!hasThree || !scene) return;
+    let m = unitMeshes.get(u.id);
+    if (!u.alive) {
+      if (m) { scene.remove(m.root); unitMeshes.delete(u.id); }
+      return;
+    }
+    const isFriend = u.team === state.player.team;
+    if (m && m.isFriend !== isFriend) { scene.remove(m.root); unitMeshes.delete(u.id); m = null; }
+    if (!m) {
+      m = buildK9Mesh(isFriend);
+      m.isFriend = isFriend;
+      scene.add(m.root);
+      unitMeshes.set(u.id, m);
+    }
+    m.root.position.set(u.x, u.y, u.z);
+    m.hullGroup.rotation.y = degToRad(u.hullAz ?? u.az);
+    m.turretGroup.rotation.y = degToRad(u.az);
+    m.gunPivot.rotation.x = -degToRad(u.el ?? 32);
+    m.recoilGroup.position.z = -(u.recoil || 0) * 1.15;
+    m.muzzleFlash.visible = (u.recoil || 0) > 0.72;
+  }
+
+  function updateThreeFrame(dt) {
+    if (!hasThree || !renderer || !scene) return;
+    const p = state.player;
+
+    // Update player's K9 Thunder 3D mesh (hull slope, turret rotation, gun elevation, spinning wheels, recoil!)
+    if (playerK9) {
+      playerK9.root.position.set(p.x, p.y, p.z);
+      const hRad = degToRad(p.hullAz);
+      const n = getTerrainNormal(p.x, p.z);
+      playerK9.hullGroup.rotation.y = hRad;
+      // Subtle pitch & roll on hills + recoil suspension kick
+      const fwdSlope = -(n.x * Math.sin(hRad) + n.z * Math.cos(hRad));
+      playerK9.hullGroup.rotation.x = fwdSlope * 0.45 - p.recoil * 0.055;
+      playerK9.turretGroup.rotation.y = degToRad(p.az);
+      playerK9.gunPivot.rotation.x = -degToRad(p.el);
+      playerK9.recoilGroup.position.z = -p.recoil * 1.15;
+      playerK9.muzzleFlash.visible = p.recoil > 0.72;
+
+      // Spin all 16 roadwheels/sprockets & scroll track tread texture!
+      const wheelRot = p.trackPhase * 2.2;
+      for (const w of playerK9.wheels) w.rotation.x = wheelRot;
+      playerK9.trackTex.offset.x = -p.trackPhase * 0.45;
+      for (let i = 0; i < playerK9.antennas.length; i++) {
+        playerK9.antennas[i].rotation.x = Math.sin(state.time * 4.2 + i) * 0.09 - p.vel * 0.012;
+      }
+
+      // Move directional sun shadow frustum with player K9 for crisp shadows everywhere!
+      sunLight.position.set(p.x + 180, p.y + 240, p.z + 150);
+      sunLight.target.position.set(p.x, p.y, p.z);
+      sunLight.target.updateMatrixWorld();
+    }
+
+    // Sync other K9 units
+    for (const u of state.units) syncUnitK9Mesh(u);
+
+    // Sync Target Beacon
+    if (state.markedTarget) {
+      targetBeaconMesh.visible = true;
+      targetBeaconMesh.position.set(state.markedTarget.x, getTerrainHeight(state.markedTarget.x, state.markedTarget.z) + 1.5, state.markedTarget.z);
+      targetBeaconMesh.rotation.z = state.time * 1.5;
+    } else {
+      targetBeaconMesh.visible = false;
+    }
+
+    // Flying shells: bright glowing core + fading tracer trail (pooled meshes)
+    fxUsed = 0;
+    for (const sh of state.shells) {
+      const isR = sh.ammo === 'RECON';
+      const core = isR ? 0x7dd3fc : 0xfff2a8, trail = isR ? 0x38bdf8 : 0xff9b3d;
+      fxSphere(sh.x, sh.y, sh.z, 1.9, core, 1.0);
+      const tr = sh.trail || [];
+      for (let i = 0; i < tr.length; i++) {
+        const k = (i + 1) / tr.length;
+        fxSphere(tr[i].x, tr[i].y, tr[i].z, 0.5 + k * 1.1, trail, 0.08 + k * 0.5);
+      }
+    }
+
+    // Parachute recon pods in the sky
+    const activeChuteIds = new Set();
+    for (const ch of state.reconChutes) {
+      activeChuteIds.add(ch.id);
+      let cm = chuteMeshes.get(ch.id);
+      if (!cm) {
+        cm = new THREE.Group();
+        const canopy = new THREE.Mesh(
+          new THREE.SphereGeometry(6.5, 12, 8, 0, Math.PI * 2, 0, Math.PI * 0.55),
+          new THREE.MeshStandardMaterial({ color: ch.team === p.team ? 0x38bdf8 : 0xff7744, side: THREE.DoubleSide })
+        );
+        canopy.position.y = 6;
+        cm.add(canopy);
+        const pod = new THREE.Mesh(new THREE.CylinderGeometry(0.9, 0.9, 2.2, 8), matDarkMetal);
+        cm.add(pod);
+        scene.add(cm);
+        chuteMeshes.set(ch.id, cm);
+      }
+      cm.position.set(ch.x, ch.y, ch.z);
+      cm.rotation.z = Math.sin(state.time * 1.9 + ch.swayPhase) * 0.14;
+    }
+    for (const [id, cm] of chuteMeshes.entries()) {
+      if (!activeChuteIds.has(id)) {
+        scene.remove(cm);
+        cm.children[0].geometry.dispose(); cm.children[0].material.dispose(); cm.children[1].geometry.dispose();
+        chuteMeshes.delete(id);
+      }
+    }
+
+    // Explosions, smoke & track dust (pooled)
+    for (const ex of state.explosions) {
+      const t = ex.age / ex.maxAge;
+      const r = Math.max(4, ex.radius * (0.2 + t * 0.72));
+      fxSphere(ex.x, ex.y + r * 0.4, ex.z, r, t < 0.35 ? 0xfff0a0 : 0xff6b24, (1 - t) * 0.85);
+    }
+    for (const sm of state.smokePlumes) {
+      fxSphere(sm.x, sm.y, sm.z, sm.radius + sm.age * 3.5, 0xc2c6be, Math.max(0, 1 - sm.age / sm.maxAge) * 0.45);
+    }
+    for (const dp of state.dustParticles) {
+      fxSphere(dp.x, dp.y, dp.z, dp.r, 0xb5a486, Math.max(0, 1 - dp.age / dp.maxAge) * 0.38);
+    }
+    for (let i = fxUsed; i < fxPool.length; i++) fxPool[i].visible = false;
+
+    // Predicted impact ring for the current aim (blast radius for HE)
+    if (state.predictImpact && state.started && !state.gameOver) {
+      const pi = state.predictImpact, isR = p.ammo === 'RECON';
+      const col = isR ? 0x38bdf8 : 0xf5b942;
+      const rr = isR ? chuteScanRadiusAt(gameConfig.shells.RECON.deployAltitude) : gameConfig.shells.HE.blastRadius;
+      predictRingMesh.visible = true; predictDotMesh.visible = true;
+      predictRingMesh.material.color.setHex(col); predictDotMesh.material.color.setHex(col);
+      predictRingMesh.position.set(pi.x, pi.y + 1.5, pi.z); predictRingMesh.scale.setScalar(rr);
+      predictDotMesh.position.set(pi.x, pi.y + 1.6, pi.z); predictDotMesh.scale.setScalar(12 + Math.sin(state.time * 5) * 3);
+    } else { predictRingMesh.visible = false; predictDotMesh.visible = false; }
+
+    // Recon scan radius ring under my active chute
+    const activeChute = getActiveChute();
+    if (activeChute) {
+      scanRingMesh.visible = true;
+      scanRingMesh.position.set(activeChute.x, getTerrainHeight(activeChute.x, activeChute.z) + 2, activeChute.z);
+      scanRingMesh.scale.setScalar(chuteScanRadius(activeChute));
+    } else scanRingMesh.visible = false;
+
+    // Camera Positioning: 3rd-person chase / 1st-person gunner sight / auto-scanning recon cam
+    const azR = degToRad(p.az);
+    const shakeX = (Math.random() - 0.5) * p.shake * 0.45;
+    const shakeY = (Math.random() - 0.5) * p.shake * 0.45;
+    const W = window.innerWidth, H = window.innerHeight;
+
+    if (state.viewMode === 'THIRD') {
+      if (playerK9) playerK9.root.visible = true;
+      const backDist = 14.2;
+      const sideOffset = 2.6;
+      const cx = p.x - Math.sin(azR) * backDist + Math.cos(azR) * sideOffset + shakeX;
+      const cz = p.z - Math.cos(azR) * backDist - Math.sin(azR) * sideOffset;
+      const cy = Math.max(p.y + 6.2, getTerrainHeight(cx, cz) + 2.8) + shakeY;
+      camera.position.set(cx, cy, cz);
+      camera.lookAt(p.x + Math.sin(azR) * 14, p.y + 3.4, p.z + Math.cos(azR) * 14);
+    } else if (state.viewMode === 'GUNNER') {
+      if (playerK9) playerK9.root.visible = true;
+      const camX = p.x - Math.sin(azR) * 0.2 + Math.cos(azR) * 1.18 + shakeX * 0.3;
+      const camZ = p.z - Math.cos(azR) * 0.2 - Math.sin(azR) * 1.18;
+      const camY = p.y + 3.55 + shakeY * 0.3;
+      camera.position.set(camX, camY, camZ);
+      const lookEl = degToRad(Math.min(34, Math.max(4, p.el * 0.48)));
+      camera.lookAt(
+        camX + Math.sin(azR) * Math.cos(lookEl) * 120,
+        camY + Math.sin(lookEl) * 120,
+        camZ + Math.cos(azR) * Math.cos(lookEl) * 120
+      );
+    }
+
+    renderer.domElement.style.filter = state.viewMode !== 'RECON' ? '' : (state.thermal ? 'grayscale(1) contrast(1.55) brightness(0.8)' : 'contrast(1.35) saturate(1.35) brightness(0.92)');
+    if (state.viewMode === 'RECON' && activeChute) {
+      renderReconCam(activeChute, 0, 0, W, H);
+    } else {
+      renderer.render(scene, camera);
+      state.pipRect = null;
+      if (activeChute && state.viewMode !== 'RECON') {
+        const consoleTop = getConsoleTop();
+        const s = Math.round(Math.min(200, W * 0.34, H * 0.3));
+        const r = { x: W - s - 10, y: Math.max(60, consoleTop - s - 12), s };
+        state.pipRect = r;
+        renderer.setScissorTest(true);
+        renderer.setScissor(r.x, H - r.y - s, s, s);
+        renderReconCam(activeChute, r.x, H - r.y - s, s, s);
+        renderer.setScissorTest(false);
+        renderer.setViewport(0, 0, W, H);
+      }
+    }
+  }
+
+  function chuteScanRadiusAt(alt) {
+    return Math.max(160, Math.min(gameConfig.shells.RECON.camMaxRadiusMeters, alt * 1.4));
+  }
+  let consoleTopCache = 0, consoleTopAt = -1;
+  function getConsoleTop() {
+    if (state.time - consoleTopAt > 0.5 || consoleTopAt < 0) {
+      consoleTopAt = state.time;
+      const el = document.querySelector('.bottom-console');
+      consoleTopCache = el ? el.getBoundingClientRect().top : window.innerHeight - 80;
+    }
+    return consoleTopCache;
+  }
+
+  // The chute camera hangs under the canopy, tilted down, and keeps turning on its own
+  function placeReconCam(ch, aspect) {
+    const yaw = state.time * 0.38 + ch.swayPhase;
+    const pitch = degToRad(-50);
+    const px = ch.x, py = ch.y - 2.5, pz = ch.z;
+    reconCam.aspect = aspect; reconCam.updateProjectionMatrix();
+    reconCam.position.set(px, py, pz);
+    reconCam.lookAt(px + Math.sin(yaw) * Math.cos(pitch) * 100, py + Math.sin(pitch) * 100, pz + Math.cos(yaw) * Math.cos(pitch) * 100);
+    reconCam.updateMatrixWorld();
+    ch.camYaw = yaw;
+  }
+  function renderReconCam(ch, vx, vy, vw, vh) {
+    placeReconCam(ch, vw / vh);
+    renderer.setViewport(vx, vy, vw, vh);
+    const cm = chuteMeshes.get(ch.id); if (cm) cm.visible = false;
+    const pr = predictRingMesh.visible, pd = predictDotMesh.visible;
+    predictRingMesh.visible = false; predictDotMesh.visible = false;
+    if (cloudGroup) cloudGroup.visible = false;
+    const prevShadow = renderer.shadowMap.autoUpdate;
+    if (state.viewMode !== 'RECON') renderer.shadowMap.autoUpdate = false;
+    renderer.render(scene, reconCam);
+    renderer.shadowMap.autoUpdate = prevShadow;
+    if (cm) cm.visible = true;
+    if (cloudGroup) cloudGroup.visible = true;
+    predictRingMesh.visible = pr; predictDotMesh.visible = pd;
+  }
+
+  // =========================================================================
+  // 6. REAL JSON MULTIPLAYER
+  // =========================================================================
+  // Relay over public MQTT brokers (WebSocket/TLS). Two brokers at once for redundancy;
+  // duplicates are dropped by message id. Works on any network — no NAT/port issues, no own server.
+  const DEFAULT_BROKERS = ['wss://broker.emqx.io:8084/mqtt', 'wss://broker.hivemq.com:8884/mqtt'];
+  const MQTT_BROKERS = URL_PARAMS.get('broker') ? [URL_PARAMS.get('broker')] : DEFAULT_BROKERS;
+  const TOPIC_ROOT = 'k9thunder/v4/';
+  const PEER_TIMEOUT_MS = 9000;
+
+  class NetManager {
+    constructor() {
+      this.bc = null; this.clients = []; this.brokers = []; this.peers = new Map(); this.seen = new Map();
+      this.seq = 0; this.lastSync = 0; this.lastAiSync = 0; this.joinedAt = Date.now(); this.topic = ''; this.lastHost = null;
+    }
+    connect(roomCode) {
+      const room = sanitizeRoom(roomCode) || randomRoom();
+      state.roomCode = room;
+      document.getElementById('hud-room-tag').textContent = 'CH: ' + room;
+      document.getElementById('mp-room-display').textContent = room;
+      document.getElementById('mp-room-input').value = room;
+      try { history.replaceState(null, '', location.pathname + '?room=' + encodeURIComponent(room) + (URL_PARAMS.get('broker') ? '&broker=' + encodeURIComponent(URL_PARAMS.get('broker')) : '')); } catch (e) {}
+      this.disconnect();
+      this.joinedAt = Date.now();
+      this.topic = TOPIC_ROOT + room;
+      if ('BroadcastChannel' in window) {
+        try { this.bc = new BroadcastChannel('k9_mp_' + room); this.bc.onmessage = (ev) => this.receive(ev.data); } catch (e) {}
+      }
+      if (window.mqtt) {
+        MQTT_BROKERS.forEach((url, i) => {
+          const info = { url, status: 'connecting' }; this.brokers.push(info);
+          let c;
+          try {
+            c = window.mqtt.connect(url, {
+              clientId: 'k9_' + state.localId + '_' + i + '_' + Math.random().toString(36).slice(2, 6),
+              clean: true, keepalive: 30, connectTimeout: 8000, reconnectPeriod: 4000
+            });
+          } catch (e) { info.status = 'error'; return; }
+          const topic = this.topic;
+          c.on('connect', () => { info.status = 'ok'; c.subscribe(topic, { qos: 0 }); renderNetStatus(); this.sendJoin(); });
+          c.on('reconnect', () => { info.status = 'connecting'; renderNetStatus(); });
+          c.on('offline', () => { info.status = 'offline'; renderNetStatus(); });
+          c.on('error', () => { info.status = 'error'; renderNetStatus(); });
+          c.on('message', (t, payload) => { if (t === this.topic) this.receive(payload); });
+          this.clients.push(c);
+        });
+      }
+      renderNetStatus();
+      this.sendJoin();
+    }
+    disconnect() {
+      if (this.bc) { try { this.bc.close(); } catch (e) {} this.bc = null; }
+      for (const c of this.clients) { try { c.end(true); } catch (e) {} }
+      this.clients = []; this.brokers = [];
+      this.peers.clear();
+      state.units = state.units.filter(u => !u.isHuman);
+      updateEnemyCounter(); updatePeerCount();
+    }
+    onResume() {
+      // Tab was hidden for a while: go to the back of the host queue so stale bots don't overwrite the live game
+      this.joinedAt = Date.now(); this.peers.clear();
+    }
+    sendJoin() { if (state.started) this.send({ type: 'JOIN', callsign: state.player.callsign, team: state.player.team }); }
+    send(pkt) {
+      pkt.ts = Date.now(); pkt.senderId = state.localId; pkt.joinedAt = this.joinedAt;
+      pkt.mid = state.localId + ':' + (++this.seq);
+      const s = JSON.stringify(pkt);
+      if (pkt.type !== 'STATE' && pkt.type !== 'AI') logJsonPacket('TX', pkt);
+      if (this.bc) { try { this.bc.postMessage(s); } catch (e) {} }
+      for (const c of this.clients) { if (c.connected) { try { c.publish(this.topic, s, { qos: 0 }); } catch (e) {} } }
+    }
+    receive(raw) {
+      let pkt;
+      try { pkt = JSON.parse(typeof raw === 'string' ? raw : new TextDecoder().decode(raw)); } catch (e) { return; }
+      if (!pkt || typeof pkt !== 'object' || typeof pkt.senderId !== 'string' || typeof pkt.type !== 'string') return;
+      if (pkt.senderId === state.localId) return;
+      if (typeof pkt.mid === 'string') {
+        if (this.seen.has(pkt.mid)) return;
+        this.seen.set(pkt.mid, Date.now());
+        if (this.seen.size > 800) { const cut = Date.now() - 20000; for (const [k, t] of this.seen) if (t < cut) this.seen.delete(k); }
+      }
+      if (!state.started) return;
+      this.handlePacket(pkt);
+    }
+    activePeers() { const now = Date.now(); return [...this.peers.entries()].filter(([, p]) => now - p.lastSeen < PEER_TIMEOUT_MS); }
+    hasPeers() { return this.activePeers().length > 0; }
+    hostId() {
+      let best = { id: state.localId, joinedAt: this.joinedAt };
+      for (const [id, p] of this.activePeers()) {
+        if (p.joinedAt < best.joinedAt || (p.joinedAt === best.joinedAt && id < best.id)) best = { id, joinedAt: p.joinedAt };
+      }
+      return best.id;
+    }
+    isHost() { return this.hostId() === state.localId; }
+    handlePacket(pkt) {
+      if (pkt.type !== 'STATE' && pkt.type !== 'AI') logJsonPacket('RX', pkt);
+      const prev = this.peers.get(pkt.senderId);
+      this.peers.set(pkt.senderId, {
+        lastSeen: Date.now(), joinedAt: num(pkt.joinedAt, prev ? prev.joinedAt : Date.now()),
+        callsign: pkt.callsign ? cleanName(pkt.callsign, '원격포수') : (prev ? prev.callsign : '원격포수'),
+        team: pkt.team === 'bravo' ? 'bravo' : (pkt.team === 'alpha' ? 'alpha' : (prev ? prev.team : 'alpha'))
+      });
+      const team = pkt.team === 'bravo' ? 'bravo' : 'alpha';
+      const callsign = cleanName(pkt.callsign, '원격포수');
+
+      if (pkt.type === 'JOIN') {
+        if (!prev) addRadio('sys', '멀티링크', `${callsign} (${team === state.player.team ? '아군' : '적군'}) 합류!`);
+        this.sendState();
+        if (this.isHost()) this.sendAi();
+      } else if (pkt.type === 'STATE') {
+        upsertRemotePlayer(pkt);
+      } else if (pkt.type === 'AI') {
+        if (pkt.senderId === this.hostId() && !this.isHost() && Array.isArray(pkt.units)) applyAiSnapshot(pkt.units);
+      } else if (pkt.type === 'FIRE') {
+        const ownerId = typeof pkt.ownerId === 'string' ? pkt.ownerId : pkt.senderId;
+        if (ownerId === state.localId) return;
+        spawnShell({
+          ownerId, ownerCallsign: callsign, team, ammo: pkt.ammo === 'RECON' ? 'RECON' : 'HE',
+          x: num(pkt.x), y: num(pkt.y), z: num(pkt.z), az: num(pkt.az), el: num(pkt.el, 32),
+          charge: Math.max(0, Math.min(4, Math.round(num(pkt.charge, 2)))), isLocal: false
+        });
+        const u = state.units.find(item => item.id === ownerId);
+        if (u) {
+          u.heat = 1.0; u.recoil = 1.0; u.lastMuzzleFlash = state.time; u.az = num(pkt.az, u.az); u.el = num(pkt.el, u.el);
+          if (u.isHuman && pkt.ammo !== 'RECON') { u.exposedUntil = state.time + 25; u.lastKnown = { x: u.x, z: u.z }; }
+        }
+      } else if (pkt.type === 'KILL') {
+        const victimId = String(pkt.victimId || ''), killerId = String(pkt.killerId || '');
+        const vName = cleanName(pkt.victimCallsign, '?'), kName = cleanName(pkt.killerCallsign, '?');
+        addRadio('sys', '전장보고', `${kName} → [${vName}] 격파`);
+        if (killerId === state.localId && victimId !== state.localId) {
+          state.player.kills++; sfx.playLockOn(); showToast(`[${vName}] 격파!`);
+        }
+        const u = state.units.find(item => item.id === victimId);
+        if (u && !u.isHuman) { u.alive = false; u.hp = 0; }
+        if (state.markedTarget && state.markedTarget.unitId === victimId) clearMarkedTarget();
+        updateEnemyCounter(); checkVictory();
+      } else if (pkt.type === 'CHAT') {
+        addRadio(team === state.player.team ? 'friend' : 'enemy', callsign, String(pkt.text || '').slice(0, 80));
+      } else if (pkt.type === 'PING_TARGET' && team === state.player.team) {
+        addRadio('friend', callsign, `표적 좌표 공유됨! (${Math.round(num(pkt.x))}, ${Math.round(num(pkt.z))})`);
+      } else if (pkt.type === 'REQ_RESET') {
+        if (this.isHost()) { respawnDeadBots(); this.sendAi(); }
+      } else if (pkt.type === 'LEAVE') {
+        this.peers.delete(pkt.senderId); removeRemoteUnit(pkt.senderId, callsign);
+      }
+    }
+    sendState() {
+      const p = state.player;
+      this.send({
+        type: 'STATE', callsign: p.callsign, team: p.team,
+        x: Math.round(p.x * 10) / 10, z: Math.round(p.z * 10) / 10,
+        hullAz: Math.round(p.hullAz * 10) / 10, az: Math.round(p.az * 10) / 10,
+        el: Math.round(p.el * 10) / 10, hp: Math.round(p.hp)
+      });
+    }
+    sendAi() {
+      this.send({
+        type: 'AI', units: state.units.filter(u => !u.isHuman).map(u => ({
+          id: u.id, callsign: u.callsign, team: u.team, personality: u.personality, skill: u.skill,
+          x: Math.round(u.x * 10) / 10, z: Math.round(u.z * 10) / 10, hullAz: Math.round(u.hullAz), az: Math.round(u.az), el: Math.round(u.el),
+          hp: Math.round(u.hp), alive: u.alive
+        }))
+      });
+    }
+    tickSync(dt) {
+      this.lastSync += dt; this.lastAiSync += dt;
+      if (this.lastSync >= 0.3) { this.lastSync = 0; this.sendState(); }
+      const now = Date.now();
+      for (const [id, info] of this.peers) {
+        if (now - info.lastSeen > PEER_TIMEOUT_MS) { this.peers.delete(id); removeRemoteUnit(id, info.callsign); }
+      }
+      const host = this.hostId();
+      if (host !== this.lastHost) {
+        if (this.lastHost !== null && host === state.localId && this.peers.size > 0) {
+          addRadio('sys', '멀티링크', '호스트 권한 인계 — 이제 내 화면에서 AI 봇을 운용합니다.');
+        }
+        if (host === state.localId) prepareBotsForAuthority();
+        this.lastHost = host; renderNetStatus();
+      }
+      if (host === state.localId && this.peers.size > 0 && this.lastAiSync >= 0.45) { this.lastAiSync = 0; this.sendAi(); }
+      updatePeerCount();
+    }
+  }
+  const net = new NetManager();
+  function logJsonPacket(dir, pkt) { state.packetLog.unshift({ dir, time: new Date().toLocaleTimeString(), pkt }); if (state.packetLog.length > 40) state.packetLog.pop(); }
+
+  function upsertRemotePlayer(pkt) {
+    const id = pkt.senderId, team = pkt.team === 'bravo' ? 'bravo' : 'alpha';
+    const hp = Math.max(0, Math.min(100, num(pkt.hp, 100)));
+    const x = Math.max(-1500, Math.min(1500, num(pkt.x))), z = Math.max(-1000, Math.min(2300, num(pkt.z)));
+    let u = state.units.find(item => item.id === id);
+    if (!u) {
+      u = {
+        id, callsign: cleanName(pkt.callsign, '원격포수'), team, isHuman: true,
+        x, y: getTerrainHeight(x, z), z, hullAz: num(pkt.hullAz), az: num(pkt.az), el: num(pkt.el, 32),
+        hp, maxHp: 100, alive: hp > 0, spotted: team === state.player.team, spottedTimer: 0,
+        heat: 0.65, recoil: 0, lastMuzzleFlash: 0, pingMs: 0
+      };
+      state.units.push(u);
+    }
+    u.callsign = cleanName(pkt.callsign, u.callsign);
+    u.team = team;
+    u.netX = x; u.netZ = z; u.netHullAz = num(pkt.hullAz, u.hullAz); u.netAz = num(pkt.az, u.az); u.netEl = num(pkt.el, u.el);
+    u.hp = hp; u.alive = hp > 0;
+    u.pingMs = Math.min(999, Math.abs(Date.now() - num(pkt.ts, Date.now())));
+    updateEnemyCounter();
+  }
+  function removeRemoteUnit(id, callsign) {
+    const idx = state.units.findIndex(u => u.id === id && u.isHuman);
+    if (idx >= 0) {
+      state.units.splice(idx, 1);
+      const m = unitMeshes.get(id); if (m && scene) { scene.remove(m.root); unitMeshes.delete(id); }
+      addRadio('sys', '멀티링크', `${callsign || '원격포수'} 이탈`);
+      updateEnemyCounter();
+    }
+  }
+  function applyAiSnapshot(list) {
+    const ids = new Set();
+    for (const a of list) {
+      if (!a || typeof a.id !== 'string') continue;
+      ids.add(a.id);
+      const x = num(a.x), z = num(a.z);
+      let u = state.units.find(item => item.id === a.id && !item.isHuman);
+      if (!u) {
+        u = {
+          id: a.id, isHuman: false, x, y: getTerrainHeight(x, z), z, hullAz: num(a.hullAz), az: num(a.az), el: num(a.el, 34),
+          maxHp: 100, spotted: false, spottedTimer: 0, heat: 0.45, recoil: 0, lastMuzzleFlash: 0, shotsFired: 0,
+          fireCooldown: 8 + Math.random() * 6, moveTarget: null, pingMs: 0
+        };
+        state.units.push(u);
+      }
+      u.callsign = cleanName(a.callsign, u.callsign || 'AI'); u.team = a.team === 'bravo' ? 'bravo' : 'alpha';
+      u.personality = String(a.personality || u.personality || 'support').slice(0, 16); u.skill = Math.max(0.3, Math.min(0.95, num(a.skill, 0.75)));
+      u.netX = x; u.netZ = z; u.netHullAz = num(a.hullAz, u.hullAz); u.netAz = num(a.az, u.az); u.netEl = num(a.el, u.el);
+      u.hp = Math.max(0, Math.min(100, num(a.hp, 100))); u.alive = !!a.alive && u.hp > 0;
+      if (u.team === state.player.team) u.spotted = true;
+    }
+    state.units = state.units.filter(u => u.isHuman || ids.has(u.id));
+    if (state.markedTarget && state.markedTarget.unitId) {
+      const t = state.units.find(u => u.id === state.markedTarget.unitId);
+      if (!t || !t.alive) clearMarkedTarget();
+    }
+    updateEnemyCounter(); checkVictory();
+  }
+  function prepareBotsForAuthority() {
+    for (const u of state.units) {
+      if (u.isHuman) continue;
+      if (u.netX !== undefined) { u.x = u.netX; u.z = u.netZ; u.y = getTerrainHeight(u.x, u.z); }
+      delete u.netX; delete u.netZ;
+      if (!(u.fireCooldown > 0)) u.fireCooldown = 6 + Math.random() * 6;
+      if (u.shotsFired === undefined) u.shotsFired = 0;
+      if (u.skill === undefined) u.skill = 0.75;
+    }
+  }
+  function lerpAngle(a, b, t) { let d = b - a; if (d > 180) d -= 360; if (d < -180) d += 360; return normAngle(a + d * t); }
+  function smoothNetUnit(u, dt) {
+    if (u.netX === undefined) return;
+    const d = Math.hypot(u.netX - u.x, u.netZ - u.z);
+    const t = d > 200 ? 1 : Math.min(1, dt * 6);
+    u.x += (u.netX - u.x) * t; u.z += (u.netZ - u.z) * t; u.y = getTerrainHeight(u.x, u.z);
+    u.hullAz = lerpAngle(u.hullAz || 0, u.netHullAz || 0, t);
+    if (u.recoil < 0.3) { u.az = lerpAngle(u.az || 0, u.netAz || 0, t); u.el += ((u.netEl ?? u.el) - u.el) * t; }
+    if (Math.abs(u.netX - u.x) > 0.05 || Math.abs(u.netZ - u.z) > 0.05) u.trackPhase = (u.trackPhase || 0) + d * 0.02;
+  }
+  function renderNetStatus() {
+    const box = document.getElementById('net-status'); if (!box) return;
+    box.innerHTML = '';
+    const addRow = (label, text, cls) => {
+      const row = document.createElement('div'); row.className = 'net-row';
+      const a = document.createElement('span'); a.textContent = label;
+      const b = document.createElement('span'); b.className = cls; b.textContent = text;
+      row.appendChild(a); row.appendChild(b); box.appendChild(row);
+    };
+    if (!window.mqtt) addRow('인터넷 중계', '라이브러리 로드 실패 — 같은 브라우저 탭끼리만 연결', 'net-bad');
+    net.brokers.forEach((b, i) => {
+      const host = b.url.replace(/^wss?:\/\//, '').split(/[:/]/)[0];
+      const map = { ok: ['연결됨', 'net-ok'], connecting: ['연결 중…', 'net-wait'], offline: ['끊김 · 재시도 중', 'net-bad'], error: ['오류 · 재시도 중', 'net-bad'] };
+      const [t, c] = map[b.status] || ['?', 'net-wait'];
+      addRow(`서버 ${i + 1} (${host})`, t, c);
+    });
+    const hostEl = document.getElementById('net-host');
+    if (hostEl) {
+      const hid = net.hostId();
+      const hostName = hid === state.localId ? state.player.callsign + ' (나)' : ((net.peers.get(hid) || {}).callsign || hid);
+      hostEl.textContent = `접속 인원 ${1 + net.activePeers().length}명 · AI 봇 운용(호스트): ${hostName}`;
+    }
+    const link = document.getElementById('mp-invite-link'); if (link) link.value = inviteLink(state.roomCode);
+  }
+
+  // =========================================================================
+  // 7. SHELLS, PARACHUTE CAMERAS, SHOOT-AND-SCOOT & AI
+  // =========================================================================
+  function makeBot(cfg, rand) {
+    const x = cfg.x + (rand() - 0.5) * 140, z = cfg.z + (rand() - 0.5) * 140;
+    const initAz = cfg.team === 'alpha' ? 0 : 180;
+    return {
+      id: cfg.id, callsign: cfg.callsign, team: cfg.team, isHuman: false,
+      personality: cfg.personality, skill: cfg.skill,
+      x, y: getTerrainHeight(x, z), z, hullAz: initAz, az: initAz, el: 34,
+      hp: 100, maxHp: 100, alive: true, spotted: cfg.team === state.player.team,
+      spottedTimer: 0, heat: 0.45, recoil: 0, fireCooldown: 7 + rand() * 8,
+      moveTarget: null, shotsFired: 0, lastMuzzleFlash: 0, pingMs: Math.floor(18 + rand() * 38)
+    };
+  }
+  function spawnInitialUnits() {
+    for (const [id, m] of unitMeshes.entries()) { const u = state.units.find(x => x.id === id); if (!u || !u.isHuman) { scene && scene.remove(m.root); unitMeshes.delete(id); } }
+    const humans = state.units.filter(u => u.isHuman);
+    state.units = humans;
+    const rand = seededRand(gameConfig.meta.mapSeed + 19);
+    for (const cfg of gameConfig.aiSquad) state.units.push(makeBot(cfg, rand));
+    updateEnemyCounter();
+  }
+  function respawnDeadBots() {
+    const rand = seededRand(Math.floor(Math.random() * 1e9));
+    for (const cfg of gameConfig.aiSquad) {
+      const i = state.units.findIndex(u => u.id === cfg.id && !u.isHuman);
+      if (i < 0) state.units.push(makeBot(cfg, rand));
+      else if (!state.units[i].alive) state.units[i] = makeBot(cfg, rand);
+    }
+    updateEnemyCounter();
+  }
+
+  function resetWorld(newSeed) {
+    const multi = net.hasPeers();
+    if (newSeed && !multi) gameConfig.meta.mapSeed = newSeed;
+    const seedChanged = gameConfig.meta.mapSeed !== state.builtSeed;
+    state.gameOver = false;
+    state.viewMode = 'THIRD'; state.lastTankView = 'THIRD'; state.activeReconId = null;
+    state.shells = []; state.reconChutes = []; state.explosions = []; state.smokePlumes = []; state.dustParticles = [];
+    state.impactMarks = []; clearMarkedTarget(); state.scoot.active = false;
+    document.getElementById('scoot-banner').classList.remove('show');
+
+    const p = state.player;
+    p.exposedUntil = 0; p.lastKnown = null;
+    p.hp = 100; p.kills = 0; p.reloadTimer = 0; p.recoil = 0; p.shake = 0; p.vel = 0;
+    p.x = (p.team === 'alpha' ? 0 : 220) + (Math.random() - 0.5) * 80;
+    p.z = (p.team === 'alpha' ? -220 : 1480) + (Math.random() - 0.5) * 60;
+    p.y = getTerrainHeight(p.x, p.z);
+    p.hullAz = p.team === 'alpha' ? 24 : 204;
+    p.az = p.team === 'alpha' ? 12 : 192; p.targetAz = p.az;
+    p.el = 32; p.targetEl = 32;
+
+    if (seedChanged || !terrainMesh) { rebuildThreeEnvironment(); state.builtSeed = gameConfig.meta.mapSeed; }
+    if (!multi) spawnInitialUnits();
+    else if (net.isHost()) { respawnDeadBots(); net.sendAi(); }
+    else net.send({ type: 'REQ_RESET' });
+    setViewMode('THIRD');
+    updateHUDValues();
+    document.getElementById('end-modal').classList.remove('open');
+    addRadio('crew', '포반장', 'K9 전투배치 완료! 정찰탄[R] 발사 → 자동 스캔으로 적 식별 → [F] 자동조준 → [Space] 고폭탄!');
+  }
+
+  function spawnShell({ ownerId, ownerCallsign, team, ammo, x, y, z, az, el, charge, isLocal }) {
+    const v0 = gameConfig.physics.charges[charge] || 205;
+    const azR = degToRad(az), elR = degToRad(el);
+    state.shells.push({
+      id: 'sh_' + Math.random().toString(36).slice(2, 8),
+      ownerId, ownerCallsign, team, ammo, isLocal, x, y, z, trail: [],
+      vx: Math.sin(azR) * Math.cos(elR) * v0, vy: Math.sin(elR) * v0, vz: Math.cos(azR) * Math.cos(elR) * v0, age: 0
+    });
+  }
+
+  function fireLocalCannon() {
+    if (!state.started || state.gameOver) return;
+    const p = state.player;
+    if (p.reloadTimer > 0) { showToast(`장전 중... ${p.reloadTimer.toFixed(1)}s`); return; }
+    sfx.init();
+    const isRecon = p.ammo === 'RECON';
+    const shellCfg = isRecon ? gameConfig.shells.RECON : gameConfig.shells.HE;
+    p.reloadTimer = shellCfg.reloadSec;
+    p.recoil = 1.0; p.shake = isRecon ? 0.45 : 1.0;
+    sfx.playCannon(isRecon);
+
+    // Shell leaves from the actual muzzle tip, along the barrel
+    const mz = getMuzzle(p.x, p.y, p.z, p.az, p.el);
+    spawnShell({ ownerId: state.localId, ownerCallsign: p.callsign, team: p.team, ammo: p.ammo, x: mz.x, y: mz.y, z: mz.z, az: p.az, el: p.el, charge: p.charge, isLocal: true });
+    net.send({ type: 'FIRE', callsign: p.callsign, team: p.team, ammo: p.ammo, x: Math.round(mz.x * 10) / 10, y: Math.round(mz.y * 10) / 10, z: Math.round(mz.z * 10) / 10, az: p.az, el: p.el, charge: p.charge });
+
+    state.smokePlumes.push({ x: mz.x, y: mz.y, z: mz.z, radius: 5.5, age: 0, maxAge: 4.5 });
+
+    if (!isRecon) {
+      p.exposedUntil = state.time + 25; p.lastKnown = { x: p.x, z: p.z }; // counter-battery radar tracks the firing point
+      state.scoot.active = true; state.scoot.fireX = p.x; state.scoot.fireZ = p.z;
+      state.scoot.timer = gameConfig.physics.scootGraceSec || 9.5; state.scoot.counterFired = false;
+      document.getElementById('scoot-banner').classList.add('show');
+      const tofTxt = state.predictImpact ? ` 탄착까지 ${state.predictImpact.tof.toFixed(1)}초.` : '';
+      addRadio('crew', '조종수', `155mm 고폭탄 발사!${tofTxt} 즉시 기동(I/K/Q/E)해 75m 이탈하십시오!`);
+    } else {
+      addRadio('crew', '장전수', `정찰포탄 발사! 방위 ${p.az.toFixed(1)}°, 고각 ${p.el.toFixed(1)}° — 낙하산 전개 후 자동 스캔합니다.`);
+    }
+  }
+
+  function deployParachuteCamera(sh) {
+    const cfg = gameConfig.shells.RECON;
+    const chute = {
+      id: 'ch_' + Math.random().toString(36).slice(2, 8),
+      ownerId: sh.ownerId, team: sh.team, isLocal: sh.isLocal,
+      x: sh.x, y: Math.max(sh.y, getTerrainHeight(sh.x, sh.z) + 190), z: sh.z,
+      age: 0, maxAge: cfg.chuteLifetimeSec, swayPhase: Math.random() * Math.PI * 2
+    };
+    state.reconChutes.push(chute); updateChuteCounter();
+    if (sh.isLocal) {
+      sfx.playParachuteDeploy();
+      state.activeReconId = chute.id;
+      setViewMode('RECON');
+      addRadio('crew', '전차장', '낙하산 전개! 카메라가 주변을 자동 회전 스캔합니다 — 적 발견 시 좌표 자동 잠금.');
+    }
+  }
+
+  function compass8(dx, dz) {
+    const a = normAngle(radToDeg(Math.atan2(dx, dz)));
+    return ['북', '북동', '동', '남동', '남', '남서', '서', '북서'][Math.round(a / 45) % 8];
+  }
+
+  function detonateHE(sh) {
+    const cfg = gameConfig.shells.HE;
+    const groundY = getTerrainHeight(sh.x, sh.z);
+    const distToPlayer = Math.hypot(sh.x - state.player.x, sh.z - state.player.z);
+    sfx.playExplosion(distToPlayer);
+    state.explosions.push({ x: sh.x, y: groundY, z: sh.z, age: 0, maxAge: 1.8, radius: cfg.blastRadius });
+    state.smokePlumes.push({ x: sh.x, y: groundY + 6, z: sh.z, radius: 18, age: 0, maxAge: 10 });
+    if (sh.isLocal) {
+      state.impactMarks.push({ x: sh.x, z: sh.z, age: 0 });
+      if (state.impactMarks.length > 6) state.impactMarks.shift();
+    }
+
+    // Self damage — each client is authoritative for its own K9
+    if (distToPlayer < 260) state.player.shake = Math.max(state.player.shake, (1 - distToPlayer / 260) * 1.15);
+    if (distToPlayer < cfg.blastRadius && !state.gameOver) {
+      const dmg = Math.round(cfg.maxDamage * (1 - distToPlayer / cfg.blastRadius));
+      if (dmg > 0) {
+        state.player.hp = Math.max(0, state.player.hp - dmg);
+        addRadio('crew', '조종수', `피격 경고! -${dmg} HP! 슛앤스쿠트로 진지를 옮기세요!`);
+        if (state.player.hp <= 0) {
+          net.sendState();
+          net.send({ type: 'KILL', victimId: state.localId, victimCallsign: state.player.callsign, killerId: sh.ownerId, killerCallsign: sh.ownerCallsign });
+          endMatch(false, `${sh.ownerCallsign}의 포격에 K9 자주포가 대파되었습니다.`);
+        }
+      }
+    }
+
+    const authority = net.isHost();
+    let hitAny = false;
+    for (const u of state.units) {
+      if (!u.alive) continue;
+      const d = Math.hypot(sh.x - u.x, sh.z - u.z);
+      if (d >= cfg.blastRadius) continue;
+      const dmg = d <= cfg.directHitRadius ? cfg.maxDamage : Math.round(cfg.maxDamage * (1 - d / cfg.blastRadius));
+      if (dmg <= 0) continue;
+      u.spotted = true; u.spottedTimer = Math.max(u.spottedTimer || 0, 18);
+      const friendly = u.team === state.player.team;
+      if (sh.isLocal) {
+        hitAny = true;
+        if (friendly) addRadio('friend', u.callsign, `아군 오사 주의!! 거기 나(${u.callsign})야!`);
+      }
+      // Remote players own their HP; bots are owned by the host
+      if (u.isHuman || !authority) {
+        if (sh.isLocal && !friendly) { addRadio('crew', '관측병', `유효타! [${u.callsign}] 약 -${dmg} 피해 추정`); showToast(`명중! [${u.callsign}] -${dmg}`); }
+        continue;
+      }
+      u.hp = Math.max(0, u.hp - dmg);
+      if (u.hp <= 0) {
+        u.alive = false;
+        const killerIsMe = sh.ownerId === state.localId;
+        if (killerIsMe && !friendly) {
+          state.player.kills++; sfx.playLockOn();
+          addRadio('crew', '전차장', `명중 격파! 적 자주포 [${u.callsign}] 완파!`);
+          showToast(`적 자주포 [${u.callsign}] 격파!`);
+        } else if (!killerIsMe) addRadio('sys', '전장보고', `${sh.ownerCallsign} → [${u.callsign}] 격파`);
+        net.send({ type: 'KILL', victimId: u.id, victimCallsign: u.callsign, killerId: sh.ownerId, killerCallsign: sh.ownerCallsign });
+        if (state.markedTarget && state.markedTarget.unitId === u.id) clearMarkedTarget();
+        checkVictory();
+      } else if (sh.isLocal && !friendly) {
+        addRadio('crew', '관측병', `유효타! 적 [${u.callsign}] -${dmg} 피해 (잔여 ${u.hp}%)`);
+        showToast(`명중! -${dmg} HP`);
+      }
+    }
+    // Miss feedback so you can walk your fire onto the target
+    if (sh.isLocal && !hitAny) {
+      const tgt = state.markedTarget;
+      if (tgt) {
+        const dx = sh.x - tgt.x, dz = sh.z - tgt.z, md = Math.round(Math.hypot(dx, dz));
+        addRadio('crew', '관측병', `탄착 관측: 표적 기준 ${compass8(dx, dz)}쪽 ${md}m 빗나감. [F]로 제원 재계산!`);
+        showToast(`빗나감 — ${compass8(dx, dz)} ${md}m`);
+      } else {
+        addRadio('crew', '관측병', `탄착 (${Math.round(sh.x)}, ${Math.round(sh.z)}) — 피해 없음. 정찰탄으로 표적부터 잡으세요.`);
+      }
+    }
+    updateEnemyCounter();
+  }
+
+  function checkVictory() {
+    if (!state.started || state.gameOver) return;
+    const enemies = state.units.filter(u => u.team !== state.player.team);
+    if (enemies.length > 0 && enemies.every(u => !u.alive)) {
+      endMatch(true, `모든 적 자주포를 정찰·식별하여 완파했습니다! (내 격파 ${state.player.kills})`);
+    }
+  }
+  function endMatch(victory, desc) {
+    state.gameOver = true;
+    document.getElementById('end-title').textContent = victory ? '🏆 작전 승리!' : '💥 K9 자주포 대파';
+    document.getElementById('end-title').style.color = victory ? 'var(--accent)' : 'var(--danger)';
+    document.getElementById('end-desc').textContent = desc;
+    document.getElementById('end-modal').classList.add('open');
+  }
+
+  // ---- Auto recon: chute identifies units in its scan radius and locks the nearest enemy ----
+  function clearMarkedTarget() {
+    state.markedTarget = null;
+    const b = document.getElementById('btn-auto-aim'); if (b) b.disabled = true;
+  }
+  function autoLockFromChute(ch, camR) {
+    const cur = state.markedTarget;
+    if (cur && cur.unitId) {
+      const cu = state.units.find(u => u.id === cur.unitId);
+      if (cu && cu.alive && cu.spotted) return;
+    }
+    let best = null, bestD = Infinity;
+    for (const u of state.units) {
+      if (!u.alive || u.team === state.player.team) continue;
+      const d = Math.hypot(u.x - ch.x, u.z - ch.z);
+      if (d <= camR && d < bestD) { best = u; bestD = d; }
+    }
+    if (best) lockTarget(best.x, best.z, best, true);
+  }
+
+  function updateAI(dt) {
+    const authority = net.isHost();
+    for (const u of state.units) {
+      if (u.recoil > 0) u.recoil = Math.max(0, u.recoil - dt * 2.5);
+      u.heat = Math.max(0.42, (u.heat || 0.45) - dt * 0.06);
+      if (u.spottedTimer > 0) { u.spottedTimer -= dt; if (u.spottedTimer <= 0 && u.team !== state.player.team) u.spotted = false; }
+      if (!u.alive) continue;
+      if (u.isHuman || !authority) { smoothNetUnit(u, dt); continue; }
+
+      if (u.moveTarget) {
+        const dx = u.moveTarget.x - u.x, dz = u.moveTarget.z - u.z, d = Math.hypot(dx, dz);
+        if (d < 12) u.moveTarget = null;
+        else { u.x += (dx / d) * 9 * dt; u.z += (dz / d) * 9 * dt; u.y = getTerrainHeight(u.x, u.z); u.hullAz = normAngle(radToDeg(Math.atan2(dx, dz))); }
+      }
+      u.fireCooldown -= dt;
+      if (u.fireCooldown <= 0) {
+        u.fireCooldown = 12 + Math.random() * 9;
+        const candidates = [];
+        const pl = state.player;
+        if (u.team !== pl.team && pl.hp > 0 && !state.gameOver && state.time < (pl.exposedUntil || 0) && pl.lastKnown) {
+          candidates.push(pl.lastKnown, pl.lastKnown); // exposed players draw more fire
+        }
+        for (const other of state.units) {
+          if (!other.alive || other.team === u.team) continue;
+          if (other.isHuman) { if (state.time < (other.exposedUntil || 0) && other.lastKnown) candidates.push(other.lastKnown, other.lastKnown); }
+          else candidates.push(other);
+        }
+        if (!candidates.length) continue;
+        const tgt = candidates[Math.floor(Math.random() * candidates.length)];
+        const spread = (1.2 - u.skill) * (u.shotsFired === 0 ? 300 : 160);
+        const sol = solveFiringSolution(u.x, u.y, u.z, tgt.x + (Math.random() - 0.5) * spread * 2, tgt.z + (Math.random() - 0.5) * spread * 2);
+        u.az = sol.az; u.el = sol.el; u.heat = 1.0; u.recoil = 1.0; u.lastMuzzleFlash = state.time; u.shotsFired++;
+        const ammo = (u.shotsFired % 3 === 1 && Math.random() < 0.35) ? 'RECON' : 'HE';
+        const mz = getMuzzle(u.x, u.y, u.z, sol.az, sol.el);
+        spawnShell({ ownerId: u.id, ownerCallsign: u.callsign, team: u.team, ammo, x: mz.x, y: mz.y, z: mz.z, az: sol.az, el: sol.el, charge: sol.charge, isLocal: false });
+        net.send({ type: 'FIRE', ownerId: u.id, callsign: u.callsign, team: u.team, ammo, x: Math.round(mz.x * 10) / 10, y: Math.round(mz.y * 10) / 10, z: Math.round(mz.z * 10) / 10, az: sol.az, el: sol.el, charge: sol.charge });
+        if (u.shotsFired % 3 === 0) {
+          const ang = Math.random() * Math.PI * 2;
+          u.moveTarget = { x: Math.max(-1200, Math.min(1200, u.x + Math.cos(ang) * 180)), z: Math.max(-600, Math.min(2200, u.z + Math.sin(ang) * 180)) };
+        }
+      }
+    }
+  }
+
+  function updateSimulation(dt) {
+    state.time += dt;
+    const p = state.player;
+    if (p.reloadTimer > 0) p.reloadTimer = Math.max(0, p.reloadTimer - dt);
+    if (p.recoil > 0) p.recoil = Math.max(0, p.recoil - dt * 2.5);
+    if (p.shake > 0) p.shake = Math.max(0, p.shake - dt * 2.2);
+
+    if (state.started && !state.gameOver && document.activeElement?.tagName !== 'INPUT' && document.activeElement?.tagName !== 'TEXTAREA') {
+      const fine = state.keys['Shift'] ? 0.28 : 1.0;
+      if (state.keys['a'] || state.keys['ArrowLeft']) p.targetAz = normAngle(p.targetAz - 38 * fine * dt);
+      if (state.keys['d'] || state.keys['ArrowRight']) p.targetAz = normAngle(p.targetAz + 38 * fine * dt);
+      if ((state.keys['w'] && !state.keys['Shift']) || state.keys['ArrowUp']) p.targetEl = Math.min(75, p.targetEl + 24 * fine * dt);
+      if ((state.keys['s'] && !state.keys['Shift']) || state.keys['ArrowDown']) p.targetEl = Math.max(5, p.targetEl - 24 * fine * dt);
+
+      const turnInput = (state.keys['e'] || state.keys['btn_turn_r'] ? 1 : 0) - (state.keys['q'] || state.keys['btn_turn_l'] ? 1 : 0);
+      if (turnInput !== 0) {
+        const dTurn = turnInput * (gameConfig.physics.sphTurnRateDeg || 44) * dt;
+        p.hullAz = normAngle(p.hullAz + dTurn);
+        p.targetAz = normAngle(p.targetAz + dTurn * 0.35);
+      }
+
+      const fwdInput = (state.keys['i'] || (state.keys['Shift'] && state.keys['w']) || state.keys['btn_fwd'] ? 1 : 0)
+                     - (state.keys['k'] || (state.keys['Shift'] && state.keys['s']) || state.keys['btn_back'] ? 1 : 0);
+      const maxSpd = gameConfig.physics.sphMaxSpeed || 19.5;
+      const revSpd = gameConfig.physics.sphReverseSpeed || 10.5;
+      const targetVel = fwdInput > 0 ? maxSpd : (fwdInput < 0 ? -revSpd : 0);
+      p.vel += (targetVel - p.vel) * Math.min(1, dt * (fwdInput !== 0 ? 2.6 : 4.2));
+      if (Math.abs(p.vel) < 0.08 && fwdInput === 0) p.vel = 0;
+
+      if (Math.abs(p.vel) > 0.1 || turnInput !== 0) {
+        const hRad = degToRad(p.hullAz);
+        p.x = Math.max(-1450, Math.min(1450, p.x + Math.sin(hRad) * p.vel * dt));
+        p.z = Math.max(-950, Math.min(2250, p.z + Math.cos(hRad) * p.vel * dt));
+        p.y = getTerrainHeight(p.x, p.z);
+        p.trackPhase += p.vel * dt * 0.55;
+        if (Math.random() < 0.45 && state.dustParticles.length < 90) {
+          const side = (Math.random() < 0.5 ? -1 : 1) * 1.6;
+          state.dustParticles.push({
+            x: p.x - Math.sin(hRad) * 3.8 + Math.cos(hRad) * side, y: p.y + 0.6,
+            z: p.z - Math.cos(hRad) * 3.8 - Math.sin(hRad) * side, r: 1.2 + Math.random() * 1.2, age: 0, maxAge: 1.3
+          });
+        }
+      }
+      p.speedKmh = Math.round(Math.abs(p.vel) * 3.6);
+      sfx.updateEngine(p.vel / maxSpd);
+    }
+
+    if (state.scoot.active) {
+      const moved = Math.hypot(p.x - state.scoot.fireX, p.z - state.scoot.fireZ);
+      const safeDist = gameConfig.physics.scootSafeDist || 75;
+      state.scoot.timer -= dt;
+      document.getElementById('scoot-dist-badge').textContent = `이동 ${Math.round(moved)}m / ${safeDist}m`;
+      document.getElementById('scoot-timer-badge').textContent = `${Math.max(0, state.scoot.timer).toFixed(1)}s`;
+      if (moved >= safeDist) {
+        state.scoot.active = false; document.getElementById('scoot-banner').classList.remove('show');
+        sfx.playLockOn(); addRadio('crew', '전차장', `슛앤스쿠트 성공! (${Math.round(moved)}m 이탈) 대포병 회피 완료!`);
+        showToast('진지 변환 성공! 대포병 회피');
+      } else if (state.scoot.timer <= 0 && !state.scoot.counterFired) {
+        state.scoot.counterFired = true; state.scoot.active = false; document.getElementById('scoot-banner').classList.remove('show');
+        const shooter = state.units.find(u => u.alive && u.team !== p.team);
+        if (shooter) {
+          const sol = solveFiringSolution(shooter.x, shooter.y, shooter.z, state.scoot.fireX + (Math.random() - 0.5) * 45, state.scoot.fireZ + (Math.random() - 0.5) * 45);
+          const mz = getMuzzle(shooter.x, shooter.y, shooter.z, sol.az, sol.el);
+          spawnShell({ ownerId: shooter.id, ownerCallsign: shooter.callsign + '(대포병)', team: shooter.team, ammo: 'HE', x: mz.x, y: mz.y, z: mz.z, az: sol.az, el: sol.el, charge: sol.charge, isLocal: false });
+          net.send({ type: 'FIRE', ownerId: shooter.id, callsign: shooter.callsign + '(대포병)', team: shooter.team, ammo: 'HE', x: Math.round(mz.x * 10) / 10, y: Math.round(mz.y * 10) / 10, z: Math.round(mz.z * 10) / 10, az: sol.az, el: sol.el, charge: sol.charge });
+          addRadio('enemy', shooter.callsign, '대포병 레이더 포착! 보복 포격 발사!');
+        }
+      }
+    }
+
+    let azDiff = p.targetAz - p.az;
+    if (azDiff > 180) azDiff -= 360; if (azDiff < -180) azDiff += 360;
+    p.az = normAngle(p.az + azDiff * Math.min(1, dt * 11));
+    p.el += (p.targetEl - p.el) * Math.min(1, dt * 11);
+
+    const g = gameConfig.physics.gravity, drag = gameConfig.physics.airDrag, wind = getWindVec(), reconCfg = gameConfig.shells.RECON;
+    for (let i = state.shells.length - 1; i >= 0; i--) {
+      const sh = state.shells[i];
+      const rvx = sh.vx - wind.x, rvz = sh.vz - wind.z, spd = Math.hypot(rvx, sh.vy, rvz);
+      sh.vx += (-drag * spd * rvx) * dt; sh.vy += (-g - drag * spd * sh.vy) * dt; sh.vz += (-drag * spd * rvz) * dt;
+      sh.trail.push({ x: sh.x, y: sh.y, z: sh.z });
+      if (sh.trail.length > 16) sh.trail.shift();
+      sh.x += sh.vx * dt; sh.y += sh.vy * dt; sh.z += sh.vz * dt; sh.age += dt;
+      const groundY = getTerrainHeight(sh.x, sh.z);
+      if (sh.ammo === 'RECON' && sh.vy < 0 && (sh.y - groundY) <= reconCfg.deployAltitude) {
+        deployParachuteCamera(sh); state.shells.splice(i, 1); continue;
+      }
+      if (sh.age > 0.2 && sh.y <= groundY) {
+        if (sh.ammo === 'RECON') deployParachuteCamera(sh); else detonateHE(sh);
+        state.shells.splice(i, 1);
+      }
+    }
+
+    for (let i = state.reconChutes.length - 1; i >= 0; i--) {
+      const ch = state.reconChutes[i];
+      ch.age += dt; ch.x += wind.x * 0.55 * dt; ch.z += wind.z * 0.55 * dt; ch.y -= reconCfg.chuteDescentSpeed * dt;
+      const groundY = getTerrainHeight(ch.x, ch.z);
+      const camR = chuteScanRadius(ch);
+      if (ch.team === state.player.team) {
+        for (const u of state.units) {
+          if (u.alive && Math.hypot(u.x - ch.x, u.z - ch.z) <= camR) {
+            if (!u.spotted && u.team !== state.player.team) {
+              u.spotted = true; sfx.playLockOn();
+              addRadio('crew', '정찰영상', `적 자주포 [${u.callsign}] 자동 식별!`);
+            }
+            u.spottedTimer = Math.max(u.spottedTimer, 14);
+          }
+        }
+        autoLockFromChute(ch, camR);
+      } else {
+        const pl = state.player;
+        if (Math.hypot(pl.x - ch.x, pl.z - ch.z) <= camR) { pl.exposedUntil = Math.max(pl.exposedUntil || 0, state.time + 12); pl.lastKnown = { x: pl.x, z: pl.z }; }
+      }
+      for (const u of state.units) {
+        if (u.isHuman && u.alive && u.team !== ch.team && Math.hypot(u.x - ch.x, u.z - ch.z) <= camR) { u.exposedUntil = Math.max(u.exposedUntil || 0, state.time + 12); u.lastKnown = { x: u.x, z: u.z }; }
+      }
+      if (ch.y <= groundY + 12 || ch.age >= ch.maxAge) {
+        state.reconChutes.splice(i, 1); updateChuteCounter();
+        if (state.activeReconId === ch.id) {
+          const next = state.reconChutes.find(c => c.isLocal);
+          state.activeReconId = next ? next.id : null;
+          if (!next && state.viewMode === 'RECON') setViewMode(state.lastTankView);
+        }
+      }
+    }
+
+    for (let i = state.explosions.length - 1; i >= 0; i--) { state.explosions[i].age += dt; if (state.explosions[i].age >= state.explosions[i].maxAge) state.explosions.splice(i, 1); }
+    for (let i = state.smokePlumes.length - 1; i >= 0; i--) { const s = state.smokePlumes[i]; s.age += dt; s.y += 4.2 * dt; if (s.age >= s.maxAge) state.smokePlumes.splice(i, 1); }
+    for (let i = state.dustParticles.length - 1; i >= 0; i--) { const d = state.dustParticles[i]; d.age += dt; d.y += 1.4 * dt; d.r += 1.8 * dt; if (d.age >= d.maxAge) state.dustParticles.splice(i, 1); }
+
+    for (let i = state.impactMarks.length - 1; i >= 0; i--) { state.impactMarks[i].age += dt; if (state.impactMarks[i].age > 12) state.impactMarks.splice(i, 1); }
+
+    // Locked target follows a moving unit while it stays spotted
+    const mt = state.markedTarget;
+    if (mt && mt.unitId) {
+      const tu = state.units.find(u => u.id === mt.unitId);
+      if (!tu || !tu.alive) clearMarkedTarget();
+      else if (tu.spotted) { mt.x = tu.x; mt.z = tu.z; }
+    }
+
+    if (state.started) { updateAI(dt); net.tickSync(dt); }
+  }
+
+  // =========================================================================
+  // 8. 2D HUD OVERLAY & CIRCULAR PARACHUTE RECON CAMERA RENDERER
+  // =========================================================================
+  const hudCanvas = document.getElementById('hud-canvas');
+  const ctx = hudCanvas.getContext('2d');
+  const miniCanvas = document.getElementById('minimap-canvas');
+  const miniCtx = miniCanvas.getContext('2d');
+
+  function resizeAll() {
+    const w = window.innerWidth, h = window.innerHeight;
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    hudCanvas.width = Math.floor(w * dpr);
+    hudCanvas.height = Math.floor(h * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    if (hasThree && renderer && camera) {
+      camera.aspect = w / h;
+      camera.updateProjectionMatrix();
+      renderer.setSize(w, h);
+    }
+  }
+
+  const _pv = hasThree ? new THREE.Vector3() : null;
+  function projectTo(cam, x, y, z, vx, vy, vw, vh) {
+    _pv.set(x, y, z).project(cam);
+    if (_pv.z > 1 || _pv.z < -1) return null;
+    return { x: vx + (_pv.x * 0.5 + 0.5) * vw, y: vy + (-_pv.y * 0.5 + 0.5) * vh };
+  }
+
+  function renderHudOverlay(w, h) {
+    ctx.clearRect(0, 0, w, h);
+    if (!hasThree || !camera) return;
+    if (state.viewMode === 'RECON') { renderReconOverlay(w, h); return; }
+
+    const p = state.player;
+    const isThird = state.viewMode === 'THIRD';
+    const cx = w * 0.5, cy = h * (isThird ? 0.42 : 0.48);
+
+    if (!isThird) {
+      const vig = ctx.createRadialGradient(cx, cy, Math.min(w, h) * 0.34, cx, cy, Math.max(w, h) * 0.72);
+      vig.addColorStop(0, 'rgba(0,0,0,0)');
+      vig.addColorStop(1, 'rgba(4,10,6,0.75)');
+      ctx.fillStyle = vig; ctx.fillRect(0, 0, w, h);
+    }
+
+    ctx.save();
+    ctx.shadowColor = 'rgba(0,0,0,0.9)'; ctx.shadowBlur = 3;
+    ctx.strokeStyle = 'rgba(82, 224, 120, 0.85)';
+    ctx.lineWidth = 1.4;
+    const arm = isThird ? 40 : 76;
+    if (state.predictImpact) {
+      const pi = state.predictImpact;
+      const s = projectTo(camera, pi.x, pi.y + 2, pi.z, 0, 0, w, h);
+      if (s && s.x > 0 && s.x < w && s.y > 0 && s.y < h) {
+        ctx.strokeStyle = p.ammo === 'RECON' ? '#7dd3fc' : '#f5b942'; ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.moveTo(s.x, s.y - 9); ctx.lineTo(s.x + 9, s.y); ctx.lineTo(s.x, s.y + 9); ctx.lineTo(s.x - 9, s.y); ctx.closePath(); ctx.stroke();
+        ctx.fillStyle = ctx.strokeStyle; ctx.font = 'bold 10px monospace'; ctx.textAlign = 'center';
+        ctx.fillText(p.ammo === 'RECON' ? '정찰캠 전개 지점' : '예상 탄착', s.x, s.y + 22);
+        ctx.strokeStyle = 'rgba(82, 224, 120, 0.85)'; ctx.lineWidth = 1.4;
+      }
+    }
+    ctx.beginPath();
+    ctx.moveTo(cx - arm, cy); ctx.lineTo(cx - 10, cy);
+    ctx.moveTo(cx + 10, cy); ctx.lineTo(cx + arm, cy);
+    ctx.moveTo(cx, cy - arm * 0.75); ctx.lineTo(cx, cy - 10);
+    ctx.moveTo(cx, cy + 10); ctx.lineTo(cx, cy + arm * 0.75);
+    ctx.stroke();
+    ctx.beginPath(); ctx.arc(cx, cy, 3.5, 0, Math.PI * 2); ctx.stroke();
+
+    if (w > 860) {
+      const tapeW = 340, tapeY = 54;
+      ctx.fillStyle = 'rgba(8, 16, 10, 0.72)';
+      ctx.fillRect(cx - tapeW * 0.5, tapeY - 13, tapeW, 22);
+      ctx.strokeStyle = 'rgba(82, 224, 120, 0.45)';
+      ctx.strokeRect(cx - tapeW * 0.5, tapeY - 13, tapeW, 22);
+      ctx.save();
+      ctx.beginPath(); ctx.rect(cx - tapeW * 0.5, tapeY - 13, tapeW, 22); ctx.clip();
+      ctx.font = '10px monospace'; ctx.textAlign = 'center';
+      const pxPerDeg = 4.2;
+      for (let d = Math.floor(p.az - 45); d <= Math.ceil(p.az + 45); d++) {
+        if (d % 5 !== 0) continue;
+        const nd = normAngle(d), x = cx + (d - p.az) * pxPerDeg;
+        ctx.strokeStyle = 'rgba(82,224,120,0.48)';
+        ctx.beginPath(); ctx.moveTo(x, tapeY + 9); ctx.lineTo(x, tapeY + (d % 15 === 0 ? 1 : 5)); ctx.stroke();
+        if (d % 15 === 0) {
+          const lbl = nd === 0 ? 'N' : nd === 90 ? 'E' : nd === 180 ? 'S' : nd === 270 ? 'W' : String(nd).padStart(3, '0');
+          ctx.fillStyle = (nd % 90 === 0) ? '#f5b942' : '#9ee6b2';
+          ctx.fillText(lbl, x, tapeY - 1);
+        }
+      }
+      // locked target bearing marker on the tape
+      if (state.markedTarget && state.markedTarget.sol) {
+        let d = state.markedTarget.sol.az - p.az; if (d > 180) d -= 360; if (d < -180) d += 360;
+        const x = cx + Math.max(-44, Math.min(44, d)) * pxPerDeg;
+        ctx.fillStyle = '#f5b942'; ctx.beginPath(); ctx.moveTo(x, tapeY + 9); ctx.lineTo(x - 5, tapeY + 2); ctx.lineTo(x + 5, tapeY + 2); ctx.closePath(); ctx.fill();
+      }
+      ctx.restore();
+      ctx.fillStyle = '#52e078';
+      ctx.beginPath(); ctx.moveTo(cx, tapeY - 13); ctx.lineTo(cx - 5, tapeY - 19); ctx.lineTo(cx + 5, tapeY - 19); ctx.closePath(); ctx.fill();
+    }
+
+    ctx.fillStyle = 'rgba(82,224,120,0.95)';
+    ctx.font = 'bold 11px monospace'; ctx.textAlign = 'left';
+    ctx.fillText(`AZ ${p.az.toFixed(1)}°`, cx + arm + 10, cy - 5);
+    ctx.fillText(`EL ${p.el.toFixed(1)}°`, cx + arm + 10, cy + 10);
+    ctx.fillStyle = p.ammo === 'RECON' ? '#38bdf8' : '#ff6b6b';
+    ctx.fillText(p.ammo === 'RECON' ? 'RECON' : `HE C${p.charge + 1}`, cx + arm + 10, cy + 25);
+    if (p.reloadTimer > 0) {
+      ctx.fillStyle = '#f5b942'; ctx.fillText(`장전 ${p.reloadTimer.toFixed(1)}s`, cx + arm + 10, cy + 40);
+      ctx.strokeStyle = '#f5b942'; ctx.lineWidth = 2.5;
+      const sc = (p.ammo === 'RECON' ? gameConfig.shells.RECON : gameConfig.shells.HE).reloadSec;
+      ctx.beginPath(); ctx.arc(cx, cy, 15, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * (1 - p.reloadTimer / sc)); ctx.stroke();
+    }
+    if (state.predictImpact) {
+      ctx.fillStyle = 'rgba(220,233,223,0.85)'; ctx.font = '10px monospace';
+      ctx.fillText(`탄착 ${Math.round(state.predictImpact.range)}m · ${state.predictImpact.tof.toFixed(1)}s`, cx + arm + 10, cy + (p.reloadTimer > 0 ? 55 : 40));
+    }
+
+    // IFF tags
+    for (const u of state.units) {
+      if (!u.alive) continue;
+      const isFriend = u.team === p.team;
+      if (!isFriend && !u.spotted) continue;
+      const s = projectTo(camera, u.x, u.y + 6.5, u.z, 0, 0, w, h);
+      if (!s) continue;
+      const dist = Math.round(Math.hypot(u.x - p.x, u.z - p.z));
+      const locked = state.markedTarget && state.markedTarget.unitId === u.id;
+      ctx.fillStyle = locked ? '#f5b942' : (isFriend ? '#38bdf8' : '#ff4d4d');
+      ctx.font = 'bold 10px monospace'; ctx.textAlign = 'center';
+      ctx.fillText(`${locked ? '🎯 ' : ''}${isFriend ? '[아군]' : '[적]'} ${u.isHuman ? '👤' : ''}${u.callsign} (${dist}m)`, s.x, s.y);
+    }
+
+    // My shells in flight
+    for (const sh of state.shells) {
+      if (!sh.isLocal) continue;
+      const s = projectTo(camera, sh.x, sh.y, sh.z, 0, 0, w, h);
+      if (!s || s.x < 0 || s.y < 0 || s.x > w || s.y > h) continue;
+      ctx.strokeStyle = sh.ammo === 'RECON' ? '#7dd3fc' : '#ffd36b'; ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.arc(s.x, s.y, 7, 0, Math.PI * 2); ctx.stroke();
+    }
+
+    // Locked target prompt
+    if (state.markedTarget) {
+      const mt = state.markedTarget;
+      ctx.textAlign = 'center'; ctx.font = 'bold 12px monospace';
+      ctx.fillStyle = 'rgba(245,185,66,0.95)';
+      const far = mt.sol && mt.sol.err > 80;
+      ctx.fillText(`🎯 표적 [${mt.callsign}] ${Math.round(Math.hypot(mt.x - p.x, mt.z - p.z))}m${far ? ' · 사거리 밖' : ''} — [F] 자동조준`, cx, cy + arm + 26);
+    }
+
+    if (state.pipRect) drawPipOverlay(state.pipRect);
+    ctx.restore();
+  }
+
+  function drawPipOverlay(r) {
+    const ch = getActiveChute(); if (!ch) return;
+    ctx.save();
+    for (const u of state.units) {
+      if (!u.alive) continue;
+      const isFriend = u.team === state.player.team;
+      if (!isFriend && !u.spotted) continue;
+      const s = projectTo(reconCam, u.x, u.y + 2, u.z, r.x, r.y, r.s, r.s);
+      if (!s || s.x < r.x || s.y < r.y || s.x > r.x + r.s || s.y > r.y + r.s) continue;
+      const locked = state.markedTarget && state.markedTarget.unitId === u.id;
+      ctx.strokeStyle = locked ? '#f5b942' : (isFriend ? '#38bdf8' : '#ff4d4d'); ctx.lineWidth = 1.5;
+      ctx.strokeRect(s.x - 6, s.y - 6, 12, 12);
+    }
+    ctx.strokeStyle = 'rgba(56,189,248,0.9)'; ctx.lineWidth = 2;
+    ctx.strokeRect(r.x, r.y, r.s, r.s);
+    const alt = Math.round(ch.y - getTerrainHeight(ch.x, ch.z));
+    ctx.fillStyle = 'rgba(5,10,7,0.75)'; ctx.fillRect(r.x, r.y, r.s, 16);
+    ctx.fillStyle = '#7dd3fc'; ctx.font = 'bold 10px monospace'; ctx.textAlign = 'left';
+    ctx.fillText(`🪂 자동스캔 ${alt}m · 탭=확대`, r.x + 4, r.y + 11);
+    ctx.restore();
+  }
+
+  function renderReconOverlay(w, h) {
+    const ch = getActiveChute();
+    if (!ch) return;
+    ctx.shadowColor = 'rgba(0,0,0,0.9)'; ctx.shadowBlur = 3;
+    const cx = w * 0.5, cy = h * 0.5, R = Math.min(w, h) * 0.47;
+    const alt = Math.max(0, ch.y - getTerrainHeight(ch.x, ch.z));
+    const camR = chuteScanRadius(ch);
+    document.getElementById('recon-alt-badge').textContent = `ALT ${Math.round(alt)}m · 반경 ${Math.round(camR)}m`;
+
+    state.reconTags = [];
+    let detected = 0;
+    for (const u of state.units) {
+      if (!u.alive) continue;
+      const isFriend = u.team === state.player.team;
+      if (!isFriend && !u.spotted) continue;
+      if (Math.hypot(u.x - ch.x, u.z - ch.z) <= camR) detected++;
+      const s = projectTo(reconCam, u.x, u.y + 2, u.z, 0, 0, w, h);
+      if (!s || Math.hypot(s.x - cx, s.y - cy) > R - 6) continue;
+      state.reconTags.push({ u, x: s.x, y: s.y });
+    }
+
+    ctx.save();
+    if (state.thermal) {
+      for (const t of state.reconTags) {
+        const g = ctx.createRadialGradient(t.x, t.y, 1, t.x, t.y, 22);
+        g.addColorStop(0, 'rgba(255,255,235,0.95)'); g.addColorStop(1, 'rgba(255,120,0,0)');
+        ctx.fillStyle = g; ctx.beginPath(); ctx.arc(t.x, t.y, 22, 0, Math.PI * 2); ctx.fill();
+      }
+    }
+    // circular optic mask
+    ctx.fillStyle = 'rgba(3,7,4,0.92)';
+    ctx.beginPath(); ctx.rect(0, 0, w, h); ctx.arc(cx, cy, R, 0, Math.PI * 2, true); ctx.fill();
+    const lv = ctx.createRadialGradient(cx, cy, R * 0.72, cx, cy, R);
+    lv.addColorStop(0, 'rgba(0,0,0,0)'); lv.addColorStop(1, 'rgba(0,0,0,0.55)');
+    ctx.fillStyle = lv; ctx.beginPath(); ctx.arc(cx, cy, R, 0, Math.PI * 2); ctx.fill();
+
+    const green = state.thermal ? '#f5b942' : '#52e078';
+    ctx.strokeStyle = green; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.arc(cx, cy, R, 0, Math.PI * 2); ctx.stroke();
+    ctx.strokeStyle = state.thermal ? 'rgba(255,210,120,0.3)' : 'rgba(82,224,120,0.3)'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.arc(cx, cy, R * 0.5, 0, Math.PI * 2);
+    ctx.moveTo(cx - R, cy); ctx.lineTo(cx + R, cy); ctx.moveTo(cx, cy - R); ctx.lineTo(cx, cy + R); ctx.stroke();
+
+    // heading / north marker (camera keeps turning by itself)
+    const yawDeg = normAngle(radToDeg(ch.camYaw || 0));
+    const rel = degToRad(normAngle(-yawDeg));
+    ctx.fillStyle = '#f5b942'; ctx.font = 'bold 13px monospace'; ctx.textAlign = 'center';
+    ctx.fillText('N', cx + Math.sin(rel) * (R + 14), cy - Math.cos(rel) * (R + 14) + 4);
+    ctx.fillStyle = green; ctx.font = 'bold 12px monospace';
+    ctx.fillText(`AUTO SCAN ● HDG ${String(Math.round(yawDeg)).padStart(3, '0')}° · 탐지 ${detected}`, cx, Math.max(16, cy - R - 10));
+
+    // tags
+    for (const t of state.reconTags) {
+      const u = t.u, isFriend = u.team === state.player.team;
+      const locked = state.markedTarget && state.markedTarget.unitId === u.id;
+      const col = locked ? '#f5b942' : (isFriend ? '#38bdf8' : '#ff4d4d');
+      ctx.strokeStyle = col; ctx.lineWidth = 1.8;
+      if (locked) {
+        const k = 16 + Math.sin(state.time * 6) * 3;
+        ctx.beginPath(); ctx.moveTo(t.x, t.y - k); ctx.lineTo(t.x + k, t.y); ctx.lineTo(t.x, t.y + k); ctx.lineTo(t.x - k, t.y); ctx.closePath(); ctx.stroke();
+      } else ctx.strokeRect(t.x - 13, t.y - 13, 26, 26);
+      ctx.fillStyle = col; ctx.font = 'bold 11px monospace';
+      ctx.fillText(`${isFriend ? '아군' : '적'} ${u.isHuman ? '👤' : ''}${u.callsign}`, t.x, t.y - 20);
+      ctx.font = '10px monospace'; ctx.fillStyle = '#fff';
+      ctx.fillText(locked ? 'LOCK' : (isFriend ? '사격금지' : '탭=표적변경'), t.x, t.y + 26);
+    }
+
+    // bottom prompt
+    ctx.font = 'bold 13px monospace';
+    const by = Math.min(h - 14, cy + R - 22);
+    if (state.markedTarget) {
+      ctx.fillStyle = 'rgba(245,185,66,' + (0.75 + Math.sin(state.time * 5) * 0.25) + ')';
+      ctx.fillText(`🎯 [${state.markedTarget.callsign}] 좌표 잠금 — [F] 자동조준 후 복귀`, cx, by);
+    } else {
+      ctx.fillStyle = green;
+      ctx.fillText('주변 자동 스캔 중… 적을 찾으면 자동으로 잠급니다', cx, by);
+    }
+    ctx.restore();
+  }
+
+  function renderMinimap() {
+    const w = miniCanvas.width, h = miniCanvas.height, cx = w * 0.5, cy = h * 0.5, r = w * 0.47;
+    const mapScale = r / 1550, originX = state.player.x, originZ = state.player.z + 650;
+    miniCtx.clearRect(0, 0, w, h);
+    miniCtx.save(); miniCtx.beginPath(); miniCtx.arc(cx, cy, r, 0, Math.PI * 2); miniCtx.clip();
+    miniCtx.fillStyle = '#07130a'; miniCtx.fillRect(0, 0, w, h);
+    miniCtx.strokeStyle = 'rgba(82,224,120,0.2)'; miniCtx.lineWidth = 1;
+    [0.33, 0.66].forEach(f => { miniCtx.beginPath(); miniCtx.arc(cx, cy, r * f, 0, Math.PI * 2); miniCtx.stroke(); });
+
+    const toMini = (wx, wz) => ({ x: cx + (wx - originX) * mapScale, y: cy - (wz - originZ) * mapScale });
+    if (state.scoot.active) {
+      const sp = toMini(state.scoot.fireX, state.scoot.fireZ);
+      miniCtx.fillStyle = 'rgba(255,77,77,0.22)'; miniCtx.strokeStyle = 'rgba(255,77,77,0.85)';
+      miniCtx.beginPath(); miniCtx.arc(sp.x, sp.y, (gameConfig.physics.scootSafeDist || 75) * mapScale, 0, Math.PI * 2); miniCtx.fill(); miniCtx.stroke();
+    }
+    for (const ch of state.reconChutes) {
+      const mp = toMini(ch.x, ch.z);
+      miniCtx.fillStyle = 'rgba(56,189,248,0.16)'; miniCtx.strokeStyle = 'rgba(56,189,248,0.75)';
+      miniCtx.beginPath(); miniCtx.arc(mp.x, mp.y, chuteScanRadius(ch) * mapScale, 0, Math.PI * 2); miniCtx.fill(); miniCtx.stroke();
+    }
+    const p = state.player, pm = toMini(p.x, p.z);
+    if (state.predictImpact) {
+      const im = toMini(state.predictImpact.x, state.predictImpact.z);
+      miniCtx.strokeStyle = p.ammo === 'RECON' ? 'rgba(56,189,248,0.75)' : 'rgba(245,185,66,0.75)';
+      miniCtx.setLineDash([3, 3]); miniCtx.beginPath(); miniCtx.moveTo(pm.x, pm.y); miniCtx.lineTo(im.x, im.y); miniCtx.stroke(); miniCtx.setLineDash([]);
+      miniCtx.beginPath(); miniCtx.arc(im.x, im.y, 4, 0, Math.PI * 2); miniCtx.stroke();
+    }
+    for (const mk of state.impactMarks) {
+      const ip = toMini(mk.x, mk.z);
+      miniCtx.strokeStyle = `rgba(255,140,60,${Math.max(0, 1 - mk.age / 12)})`; miniCtx.lineWidth = 1.5;
+      miniCtx.beginPath(); miniCtx.moveTo(ip.x - 4, ip.y - 4); miniCtx.lineTo(ip.x + 4, ip.y + 4); miniCtx.moveTo(ip.x + 4, ip.y - 4); miniCtx.lineTo(ip.x - 4, ip.y + 4); miniCtx.stroke();
+    }
+    if (state.markedTarget) {
+      const tp = toMini(state.markedTarget.x, state.markedTarget.z);
+      miniCtx.strokeStyle = '#f5b942'; miniCtx.lineWidth = 1.6;
+      miniCtx.beginPath(); miniCtx.moveTo(tp.x, tp.y - 7); miniCtx.lineTo(tp.x + 7, tp.y); miniCtx.lineTo(tp.x, tp.y + 7); miniCtx.lineTo(tp.x - 7, tp.y); miniCtx.closePath(); miniCtx.stroke();
+    }
+    miniCtx.lineWidth = 1;
+
+    for (const u of state.units) {
+      if (!u.alive) continue;
+      const isFriend = u.team === p.team;
+      if (!isFriend && !u.spotted) continue;
+      const up = toMini(u.x, u.z);
+      miniCtx.fillStyle = isFriend ? '#38bdf8' : '#ff4d4d';
+      if (isFriend) { miniCtx.beginPath(); miniCtx.arc(up.x, up.y, 3.5, 0, Math.PI * 2); miniCtx.fill(); }
+      else miniCtx.fillRect(up.x - 3.5, up.y - 3.5, 7, 7);
+    }
+    miniCtx.save(); miniCtx.translate(pm.x, pm.y); miniCtx.rotate(degToRad(p.hullAz));
+    miniCtx.fillStyle = '#52e078';
+    miniCtx.beginPath(); miniCtx.moveTo(0, -6); miniCtx.lineTo(4, 5); miniCtx.lineTo(-4, 5); miniCtx.closePath(); miniCtx.fill();
+    miniCtx.restore(); miniCtx.restore();
+  }
+
+  // =========================================================================
+  // 9. UI CONTROLS & EVENTS
+  // =========================================================================
+  function setViewMode(mode) {
+    state.viewMode = mode;
+    if (mode === 'GUNNER' || mode === 'THIRD') state.lastTankView = mode;
+    const isRecon = mode === 'RECON';
+    const camBtn = document.getElementById('btn-cam-cycle');
+    camBtn.textContent = state.lastTankView === 'THIRD' ? '3인칭 K9 [V]' : '1인칭 포수 [V]';
+    camBtn.classList.toggle('active', !isRecon);
+    document.getElementById('btn-recon-toggle').classList.toggle('active', isRecon);
+    document.getElementById('btn-thermal-toggle').style.display = isRecon ? 'inline-block' : 'none';
+    document.getElementById('recon-banner').classList.toggle('show', isRecon);
+  }
+  function selectAmmo(type) {
+    state.player.ammo = type;
+    document.getElementById('btn-ammo-recon').classList.toggle('selected-recon', type === 'RECON');
+    document.getElementById('btn-ammo-he').classList.toggle('selected-he', type === 'HE');
+    const fireBtn = document.getElementById('btn-fire');
+    fireBtn.classList.toggle('recon-mode', type === 'RECON');
+    fireBtn.textContent = type === 'RECON' ? '정찰탄 발사 [Space]' : '고폭탄 발사 [Space]';
+  }
+  function selectCharge(idx) {
+    state.player.charge = Math.max(0, Math.min(4, idx));
+    document.querySelectorAll('#charge-group .charge-btn').forEach(b => b.classList.toggle('active', Number(b.dataset.c) === state.player.charge));
+    document.getElementById('val-charge').textContent = (state.player.charge + 1) + '호';
+  }
+  function lockTarget(wx, wz, unit, auto) {
+    if (unit && unit.team === state.player.team) {
+      sfx.playBeep(440, 0.12, 0.1);
+      addRadio('friend', unit.callsign, `거기 나(${unit.callsign})야! 아군 확인, 사격 금지!`);
+      showToast(`아군 [${unit.callsign}] 확인 — 사격 금지!`); return;
+    }
+    const tx = unit ? unit.x : wx, tz = unit ? unit.z : wz, p = state.player;
+    const changed = !state.markedTarget || state.markedTarget.unitId !== (unit ? unit.id : null) || !unit;
+    const sol = solveFiringSolution(p.x, p.y, p.z, tx, tz);
+    state.markedTarget = { x: tx, z: tz, unitId: unit ? unit.id : null, callsign: unit ? unit.callsign : '지정좌표', sol, solAt: state.time };
+    document.getElementById('btn-auto-aim').disabled = false;
+    if (changed) {
+      sfx.playLockOn();
+      net.send({ type: 'PING_TARGET', callsign: p.callsign, team: p.team, x: Math.round(tx), z: Math.round(tz) });
+      if (auto) {
+        addRadio('crew', '정찰영상', `적 [${unit.callsign}] 좌표 자동 잠금! [F] 자동조준 → [Space] 고폭탄`);
+        showToast(`🎯 적 [${unit.callsign}] 자동 잠금 — [F] 자동조준`);
+      } else showToast(unit ? `적 [${unit.callsign}] 좌표 잠금!` : '좌표 마킹 완료!');
+    }
+  }
+  function applyAutoAim() {
+    const mt = state.markedTarget;
+    if (!mt) { showToast('잠긴 표적이 없습니다 — 정찰탄[R]부터 쏘세요'); return; }
+    const p = state.player;
+    const sol = solveFiringSolution(p.x, p.y, p.z, mt.x, mt.z);
+    mt.sol = sol; mt.solAt = state.time;
+    p.targetAz = sol.az; p.targetEl = sol.el;
+    selectCharge(sol.charge); selectAmmo('HE');
+    if (state.viewMode === 'RECON') setViewMode(state.lastTankView);
+    sfx.playBeep(1040, 0.07, 0.1);
+    if (sol.err > 80) showToast(`⚠ 사거리 밖 (예상 오차 ${Math.round(sol.err)}m) — 표적 쪽으로 기동 후 다시 [F]`);
+    else showToast(`자동조준 완료 (방위 ${sol.az.toFixed(1)}° 고각 ${sol.el.toFixed(1)}° 장약 ${sol.charge + 1}호) — [Space] 발사!`);
+  }
+
+  function updateHUDValues() {
+    const p = state.player;
+    document.getElementById('hud-callsign').textContent = p.callsign;
+    document.getElementById('hud-hp').textContent = Math.round(p.hp);
+    document.getElementById('hud-kills').textContent = p.kills;
+    document.getElementById('hud-wind').textContent = `${gameConfig.physics.windSpeed.toFixed(1)}m/s`;
+    document.getElementById('val-az').textContent = p.az.toFixed(1).padStart(5, '0') + '°';
+    document.getElementById('val-el').textContent = p.el.toFixed(1) + '°';
+    document.getElementById('mob-compass-pill').textContent = `AZ ${Math.round(p.az)}° · EL ${Math.round(p.el)}°`;
+    document.getElementById('slider-az').value = p.az;
+    document.getElementById('slider-el').value = p.el;
+    document.getElementById('val-speed').textContent = p.speedKmh + ' km/h';
+
+    const mz = getMuzzle(p.x, p.y, p.z, p.az, p.el);
+    const sim = simulateBallistics(mz.x, mz.y, mz.z, p.az, p.el, p.charge, p.ammo === 'RECON' ? gameConfig.shells.RECON.deployAltitude : 0);
+    const range = Math.hypot(sim.impactX - p.x, sim.impactZ - p.z);
+    state.predictImpact = { x: sim.impactX, z: sim.impactZ, y: getTerrainHeight(sim.impactX, sim.impactZ), tof: sim.tof, range };
+    document.getElementById('sol-range').textContent = Math.round(range) + ' m';
+    document.getElementById('sol-tof').textContent = sim.tof.toFixed(1) + ' s';
+
+    const relEl = document.getElementById('hud-reload-status'), fireBtn = document.getElementById('btn-fire');
+    if (p.reloadTimer > 0) { relEl.textContent = `장전 ${p.reloadTimer.toFixed(1)}s`; relEl.style.color = 'var(--amber)'; fireBtn.disabled = true; }
+    else { relEl.textContent = '장전 완료'; relEl.style.color = 'var(--accent)'; fireBtn.disabled = false; }
+
+    const aimQuick = document.getElementById('btn-auto-aim-quick');
+    aimQuick.disabled = !state.markedTarget;
+    if (state.markedTarget) {
+      const mt = state.markedTarget;
+      if (!mt.sol || state.time - (mt.solAt || 0) > 0.5) { mt.sol = solveFiringSolution(p.x, p.y, p.z, mt.x, mt.z); mt.solAt = state.time; }
+      const sol = mt.sol;
+      const aimed = Math.abs(((sol.az - p.az + 540) % 360) - 180) < 0.6 && Math.abs(sol.el - p.el) < 0.6 && p.charge === sol.charge && p.ammo === 'HE';
+      aimQuick.classList.toggle('ready', !aimed);
+      document.getElementById('sol-tgt-az').textContent = sol.az.toFixed(1) + '°';
+      document.getElementById('sol-tgt-el').textContent = sol.err > 80 ? '사거리 밖' : `${sol.el.toFixed(1)}° / C${sol.charge + 1}`;
+    } else {
+      aimQuick.classList.remove('ready');
+      document.getElementById('sol-tgt-az').textContent = '--°';
+      document.getElementById('sol-tgt-el').textContent = '--° / C-';
+    }
+  }
+  function updateEnemyCounter() { document.getElementById('hud-total-enemies').textContent = state.units.filter(u => u.team !== state.player.team).length; }
+  function updateChuteCounter() { document.getElementById('hud-chute-count').textContent = `정찰 ${state.reconChutes.filter(c => c.isLocal).length}`; }
+  function updatePeerCount() { document.getElementById('hud-peers').textContent = 1 + net.activePeers().length; }
+  function addRadio(cls, who, text) {
+    const log = document.getElementById('radio-log'), div = document.createElement('div');
+    div.className = 'radio-msg ' + cls;
+    const span = document.createElement('span'); span.className = 'who'; span.textContent = `[${who}]`;
+    div.appendChild(span); div.appendChild(document.createTextNode(text));
+    log.appendChild(div); while (log.children.length > 30) log.removeChild(log.firstChild);
+    log.scrollTop = log.scrollHeight; if (cls !== 'sys') sfx.playRadioChirp();
+  }
+  let toastTimer = null;
+  function showToast(msg) { const el = document.getElementById('toast'); el.textContent = msg; el.classList.add('show'); clearTimeout(toastTimer); toastTimer = setTimeout(() => el.classList.remove('show'), 2500); }
+
+  function renderJsonEditor() {
+    const ed = document.getElementById('json-editor'), st = document.getElementById('json-status');
+    document.getElementById('tab-json-config').classList.toggle('active', state.jsonTab === 'config');
+    document.getElementById('tab-json-state').classList.toggle('active', state.jsonTab === 'state');
+    document.getElementById('tab-json-packets').classList.toggle('active', state.jsonTab === 'packets');
+    document.getElementById('btn-json-apply').style.display = state.jsonTab === 'config' ? 'inline-block' : 'none';
+    if (state.jsonTab === 'config') { ed.readOnly = false; ed.value = JSON.stringify(gameConfig, null, 2); st.textContent = '물리·포탄·지형·AI 스쿼드를 JSON으로 수정해 즉시 적용하세요.'; }
+    else if (state.jsonTab === 'state') {
+      ed.readOnly = true;
+      ed.value = JSON.stringify({ time: Number(state.time.toFixed(2)), viewMode: state.viewMode, player: { callsign: state.player.callsign, pos: [Math.round(state.player.x), Math.round(state.player.y), Math.round(state.player.z)], hullAz: Number(state.player.hullAz.toFixed(1)), turretAz: Number(state.player.az.toFixed(1)), el: Number(state.player.el.toFixed(1)), speedKmh: state.player.speedKmh, hp: state.player.hp }, units: state.units.map(u => ({ callsign: u.callsign, team: u.team, alive: u.alive, hp: u.hp, spotted: u.spotted })) }, null, 2);
+      st.textContent = '현재 전장 실시간 JSON 스냅샷입니다.';
+    } else { ed.readOnly = true; ed.value = JSON.stringify(state.packetLog, null, 2); st.textContent = `멀티플레이어 JSON 패킷 (${state.packetLog.length}건)`; }
+  }
+  function renderMpRoster() {
+    const box = document.getElementById('mp-roster'); box.innerHTML = '';
+    const rows = [{ callsign: state.player.callsign + ' (나)', team: state.player.team, isHuman: true, alive: state.player.hp > 0, pingMs: 0 }, ...state.units];
+    for (const r of rows) {
+      const div = document.createElement('div');
+      div.className = 'badge ' + (r.team === state.player.team ? 'friend' : 'danger');
+      div.style.justifyContent = 'space-between';
+      div.textContent = `${r.isHuman ? '👤' : '🤖'} ${r.callsign} · ${r.alive ? '생존' : '격파'} (${r.pingMs}ms)`;
+      box.appendChild(div);
+    }
+  }
+  function copyTextFallback(text) {
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(() => showToast('복사되었습니다!')).catch(() => fallbackCopy(text));
+    else fallbackCopy(text);
+  }
+  function fallbackCopy(text) { const ta = document.createElement('textarea'); ta.value = text; document.body.appendChild(ta); ta.select(); try { document.execCommand('copy'); showToast('복사되었습니다!'); } catch (e) {} document.body.removeChild(ta); }
+
+  function bindEvents() {
+    window.addEventListener('resize', resizeAll);
+    document.getElementById('btn-start-game').addEventListener('click', () => {
+      sfx.init();
+      state.player.callsign = cleanName(document.getElementById('input-callsign').value, '포수_' + Math.floor(Math.random() * 90 + 10));
+      try { localStorage.setItem('k9_callsign', state.player.callsign); } catch (e) {}
+      state.player.team = document.getElementById('input-team').value === 'bravo' ? 'bravo' : 'alpha';
+      const room = sanitizeRoom(document.getElementById('input-room').value) || randomRoom();
+      document.getElementById('start-modal').classList.remove('open');
+      gameConfig.meta.mapSeed = roomSeed(room); // everyone in the same room gets the same map
+      state.started = true; net.connect(room); resetWorld();
+      addRadio('sys', '멀티링크', `방 [${room}] 입장 — 상단 🔗초대 버튼으로 친구에게 링크를 보내세요.`);
+    });
+    document.getElementById('btn-restart').addEventListener('click', () => resetWorld());
+
+    // Blur buttons after clicking so Space (fire) never re-triggers the last clicked button
+    document.addEventListener('click', (e) => { const b = e.target && e.target.closest && e.target.closest('button'); if (b) b.blur(); }, true);
+    const copyInvite = () => copyTextFallback(inviteLink(state.roomCode));
+    document.getElementById('btn-invite').addEventListener('click', () => {
+      if (navigator.share && /Mobi|Android|iPhone/i.test(navigator.userAgent)) {
+        navigator.share({ title: 'K9 Thunder 3D', text: `K9 자주포 같이 하자! 방 ${state.roomCode}`, url: inviteLink(state.roomCode) }).catch(() => {});
+      } else copyInvite();
+    });
+    document.getElementById('btn-mp-copy-link').addEventListener('click', copyInvite);
+    if (navigator.share) {
+      const sb = document.getElementById('btn-mp-share'); sb.style.display = 'inline-block';
+      sb.addEventListener('click', () => navigator.share({ title: 'K9 Thunder 3D', text: `K9 자주포 같이 하자! 방 ${state.roomCode}`, url: inviteLink(state.roomCode) }).catch(() => {}));
+    }
+    window.addEventListener('pagehide', () => { if (state.started) net.send({ type: 'LEAVE', callsign: state.player.callsign, team: state.player.team }); });
+
+    document.getElementById('btn-cam-cycle').addEventListener('click', () => {
+      if (state.viewMode === 'RECON') setViewMode(state.lastTankView);
+      else setViewMode(state.viewMode === 'THIRD' ? 'GUNNER' : 'THIRD');
+    });
+    document.getElementById('btn-recon-toggle').addEventListener('click', toggleReconView);
+    document.getElementById('btn-thermal-toggle').addEventListener('click', () => { state.thermal = !state.thermal; document.getElementById('btn-thermal-toggle').classList.toggle('active', state.thermal); });
+    document.getElementById('btn-hud-hide').addEventListener('click', () => {
+      state.hudHidden = !state.hudHidden;
+      document.getElementById('game-root').classList.toggle('hud-hidden', state.hudHidden);
+      document.getElementById('btn-hud-hide').textContent = state.hudHidden ? 'HUD 표시' : 'HUD 숨김';
+    });
+
+    const bindMobDrawer = (btnId, panelId) => {
+      const btn = document.getElementById(btnId), panel = document.getElementById(panelId);
+      btn.addEventListener('click', () => {
+        const opening = !panel.classList.contains('mob-open');
+        ['panel-ballistics', 'panel-radio', 'panel-minimap'].forEach(id => document.getElementById(id).classList.remove('mob-open'));
+        ['mob-btn-ballistics', 'mob-btn-radio', 'mob-btn-minimap'].forEach(id => document.getElementById(id).classList.remove('active'));
+        if (opening) { panel.classList.add('mob-open'); btn.classList.add('active'); }
+      });
+    };
+    bindMobDrawer('mob-btn-ballistics', 'panel-ballistics');
+    bindMobDrawer('mob-btn-minimap', 'panel-minimap');
+    bindMobDrawer('mob-btn-radio', 'panel-radio');
+
+    document.getElementById('btn-ammo-recon').addEventListener('click', () => selectAmmo('RECON'));
+    document.getElementById('btn-ammo-he').addEventListener('click', () => selectAmmo('HE'));
+    document.querySelectorAll('#charge-group .charge-btn').forEach(b => b.addEventListener('click', () => selectCharge(Number(b.dataset.c))));
+    document.getElementById('btn-fire').addEventListener('click', fireLocalCannon);
+
+    document.getElementById('slider-az').addEventListener('input', (e) => { state.player.targetAz = normAngle(parseFloat(e.target.value)); });
+    document.getElementById('slider-el').addEventListener('input', (e) => { state.player.targetEl = Math.max(5, Math.min(75, parseFloat(e.target.value))); });
+    document.getElementById('az-minus').addEventListener('click', () => { state.player.targetAz = normAngle(state.player.targetAz - 1); });
+    document.getElementById('az-plus').addEventListener('click', () => { state.player.targetAz = normAngle(state.player.targetAz + 1); });
+    document.getElementById('el-minus').addEventListener('click', () => { state.player.targetEl = Math.max(5, state.player.targetEl - 1); });
+    document.getElementById('el-plus').addEventListener('click', () => { state.player.targetEl = Math.min(75, state.player.targetEl + 1); });
+
+    document.getElementById('btn-auto-aim').addEventListener('click', applyAutoAim);
+    document.getElementById('btn-auto-aim-quick').addEventListener('click', applyAutoAim);
+
+    const bindHold = (id, key) => {
+      const el = document.getElementById(id);
+      const on = (e) => { if (e && e.cancelable) e.preventDefault(); sfx.init(); state.keys[key] = true; };
+      const off = () => { state.keys[key] = false; };
+      el.addEventListener('mousedown', on); el.addEventListener('mouseup', off); el.addEventListener('mouseleave', off);
+      el.addEventListener('touchstart', on, { passive: false }); el.addEventListener('touchend', off); el.addEventListener('touchcancel', off);
+    };
+    bindHold('btn-move-fwd', 'btn_fwd'); bindHold('btn-move-back', 'btn_back');
+    bindHold('btn-turn-left', 'btn_turn_l'); bindHold('btn-turn-right', 'btn_turn_r');
+
+    document.getElementById('btn-mute').addEventListener('click', () => { sfx.muted = !sfx.muted; document.getElementById('btn-mute').textContent = sfx.muted ? '🔇' : '🔊'; });
+    const sendChat = () => {
+      const inp = document.getElementById('chat-input'), txt = inp.value.trim();
+      if (!txt) return; inp.value = '';
+      addRadio('crew', state.player.callsign, txt);
+      net.send({ type: 'CHAT', callsign: state.player.callsign, team: state.player.team, text: txt });
+    };
+    document.getElementById('btn-chat-send').addEventListener('click', sendChat);
+    document.getElementById('chat-input').addEventListener('keydown', (e) => { if (e.key === 'Enter') sendChat(); });
+
+    document.getElementById('btn-json-modal').addEventListener('click', () => { renderJsonEditor(); document.getElementById('json-modal').classList.add('open'); });
+    document.getElementById('btn-close-json').addEventListener('click', () => document.getElementById('json-modal').classList.remove('open'));
+    document.getElementById('tab-json-config').addEventListener('click', () => { state.jsonTab = 'config'; renderJsonEditor(); });
+    document.getElementById('tab-json-state').addEventListener('click', () => { state.jsonTab = 'state'; renderJsonEditor(); });
+    document.getElementById('tab-json-packets').addEventListener('click', () => { state.jsonTab = 'packets'; renderJsonEditor(); });
+    document.getElementById('btn-json-copy').addEventListener('click', () => copyTextFallback(document.getElementById('json-editor').value));
+    document.getElementById('btn-json-reset').addEventListener('click', () => { gameConfig = JSON.parse(JSON.stringify(DEFAULT_GAME_JSON)); resetWorld(); renderJsonEditor(); showToast('기본 JSON 복원 완료'); });
+    document.getElementById('btn-json-apply').addEventListener('click', () => {
+      try {
+        const parsed = JSON.parse(document.getElementById('json-editor').value);
+        if (!parsed.physics || !parsed.shells || !parsed.terrain) throw new Error('physics, shells, terrain 필드가 필요합니다.');
+        gameConfig = parsed; rebuildThreeEnvironment(); updateHUDValues();
+        showToast('JSON 설정 즉시 반영 완료!'); document.getElementById('json-modal').classList.remove('open');
+      } catch (e) { document.getElementById('json-status').textContent = 'JSON 문법 오류: ' + e.message; }
+    });
+
+    document.getElementById('btn-mp-modal').addEventListener('click', () => { renderMpRoster(); renderNetStatus(); document.getElementById('mp-modal').classList.add('open'); });
+    document.getElementById('btn-close-mp').addEventListener('click', () => document.getElementById('mp-modal').classList.remove('open'));
+    document.getElementById('btn-mp-rejoin').addEventListener('click', () => {
+      const code = sanitizeRoom(document.getElementById('mp-room-input').value) || randomRoom();
+      if (!state.started) return;
+      net.connect(code); gameConfig.meta.mapSeed = roomSeed(code); resetWorld();
+      renderMpRoster(); renderNetStatus(); showToast(`방 [${code}]으로 이동`);
+    });
+
+    hudCanvas.addEventListener('pointerdown', (e) => {
+      sfx.init(); state.pointer.down = true;
+      state.pointer.x = e.clientX; state.pointer.y = e.clientY;
+      state.pointer.lastX = e.clientX; state.pointer.lastY = e.clientY;
+      if (!state.started) return;
+      if (state.viewMode === 'RECON') {
+        state.pointer.down = false;
+        // tap a tagged unit to switch target; tap ground to mark a coordinate
+        let best = null, bestD = 44;
+        for (const t of state.reconTags) { const d = Math.hypot(t.x - e.clientX, t.y - e.clientY); if (d < bestD) { best = t; bestD = d; } }
+        if (best) { lockTarget(best.u.x, best.u.z, best.u, false); return; }
+        const w = window.innerWidth, h = window.innerHeight;
+        if (Math.hypot(e.clientX - w * 0.5, e.clientY - h * 0.5) <= Math.min(w, h) * 0.47 && terrainMesh && reconCam) {
+          const ray = new THREE.Raycaster();
+          ray.setFromCamera(new THREE.Vector2((e.clientX / w) * 2 - 1, -(e.clientY / h) * 2 + 1), reconCam);
+          const hit = ray.intersectObject(terrainMesh)[0];
+          if (hit) lockTarget(hit.point.x, hit.point.z, null, false);
+        }
+      } else if (state.pipRect) {
+        const r = state.pipRect;
+        if (e.clientX >= r.x && e.clientX <= r.x + r.s && e.clientY >= r.y && e.clientY <= r.y + r.s) { setViewMode('RECON'); state.pointer.down = false; }
+      }
+    });
+    hudCanvas.addEventListener('pointermove', (e) => {
+      state.pointer.x = e.clientX; state.pointer.y = e.clientY;
+      if (state.pointer.down && state.viewMode !== 'RECON' && state.started) {
+        const dx = e.clientX - state.pointer.lastX, dy = e.clientY - state.pointer.lastY;
+        state.player.targetAz = normAngle(state.player.targetAz + dx * 0.16);
+        state.player.targetEl = Math.max(5, Math.min(75, state.player.targetEl - dy * 0.14));
+        state.pointer.lastX = e.clientX; state.pointer.lastY = e.clientY;
+      }
+    });
+    window.addEventListener('pointerup', () => { state.pointer.down = false; });
+
+    window.addEventListener('keydown', (e) => {
+      if (document.activeElement?.tagName === 'INPUT' || document.activeElement?.tagName === 'TEXTAREA') {
+        if (e.key === 'Escape') { document.getElementById('json-modal').classList.remove('open'); document.getElementById('mp-modal').classList.remove('open'); }
+        return;
+      }
+      state.keys[e.key] = true; state.keys[e.key.toLowerCase()] = true;
+      if (e.key === ' ' || e.key === 'Tab') e.preventDefault();
+      if (e.repeat) return;
+      if (e.key === ' ') fireLocalCannon();
+      else if (e.key === 'Tab') toggleReconView();
+      else if (e.key.toLowerCase() === 'f') applyAutoAim();
+      else if (e.key.toLowerCase() === 'v') { if (state.viewMode === 'RECON') setViewMode(state.lastTankView); else setViewMode(state.viewMode === 'THIRD' ? 'GUNNER' : 'THIRD'); }
+      else if (e.key.toLowerCase() === 'r') selectAmmo('RECON');
+      else if (e.key.toLowerCase() === 'h') selectAmmo('HE');
+      else if (e.key.toLowerCase() === 't' && state.viewMode === 'RECON') { state.thermal = !state.thermal; document.getElementById('btn-thermal-toggle').classList.toggle('active', state.thermal); }
+      else if (e.key.toLowerCase() === 'j') { const m = document.getElementById('json-modal'); if (m.classList.contains('open')) m.classList.remove('open'); else { renderJsonEditor(); m.classList.add('open'); } }
+      else if (e.key >= '1' && e.key <= '5') selectCharge(Number(e.key) - 1);
+      else if (e.key === 'Escape') { document.getElementById('json-modal').classList.remove('open'); document.getElementById('mp-modal').classList.remove('open'); }
+    });
+    window.addEventListener('keyup', (e) => {
+      state.keys[e.key] = false; state.keys[e.key.toLowerCase()] = false;
+      if (e.key === ' ' && document.activeElement?.tagName !== 'INPUT' && document.activeElement?.tagName !== 'TEXTAREA') e.preventDefault();
+    });
+    window.addEventListener('blur', () => { state.keys = {}; });
+  }
+  function toggleReconView() {
+    if (state.viewMode === 'RECON') { setViewMode(state.lastTankView); return; }
+    if (!getActiveChute()) { showToast('떠 있는 정찰캠이 없습니다 — 정찰탄[R]을 먼저 쏘세요'); return; }
+    setViewMode('RECON');
+  }
+
+  let lastFrame = 0, hudTick = 0;
+  function loop(ts) {
+    if (lastFrame && ts - lastFrame > 5000 && state.started) net.onResume();
+    const dt = Math.min(0.05, lastFrame ? (ts - lastFrame) / 1000 : 0.016);
+    lastFrame = ts;
+    updateSimulation(dt);
+    updateThreeFrame(dt);
+    renderHudOverlay(window.innerWidth, window.innerHeight);
+    renderMinimap();
+    hudTick += dt;
+    if (hudTick >= 0.08) { hudTick = 0; updateHUDValues(); }
+    requestAnimationFrame(loop);
+  }
+
+  window.onload = () => {
+    initThreeScene();
+    resizeAll();
+    bindEvents();
+    state.player.y = getTerrainHeight(state.player.x, state.player.z);
+    rebuildThreeEnvironment(); state.builtSeed = gameConfig.meta.mapSeed;
+    spawnInitialUnits();
+    updateHUDValues();
+    const linkRoom = sanitizeRoom(URL_PARAMS.get('room'));
+    document.getElementById('input-room').value = linkRoom || randomRoom();
+    try { const cs = localStorage.getItem('k9_callsign'); if (cs) document.getElementById('input-callsign').value = cs; } catch (e) {}
+    if (linkRoom) {
+      const hint = document.getElementById('invite-hint');
+      hint.style.display = 'block';
+      hint.textContent = `🔗 초대 링크로 들어왔어요 — 방 [${linkRoom}]. 콜사인과 팀만 고르고 작전 개시를 누르세요!`;
+    }
+    if (URL_PARAMS.get('debug')) window.__k9 = { state, net, lockTarget, applyAutoAim, fireLocalCannon, solveFiringSolution, getTerrainHeight };
+    requestAnimationFrame(loop);
+  };
+})();
+</script>
+</body>
+</html>
